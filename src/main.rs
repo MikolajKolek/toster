@@ -5,6 +5,7 @@ use std::fs::{File, read_dir};
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use ansi_term::Color::{Green, Red};
 use atomic_counter::{AtomicCounter, RelaxedCounter};
@@ -65,10 +66,13 @@ fn main() {
             .with_key("incorrect", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", Red.paint(format!("{} incorrect", &INCORRECT.get()))).unwrap());
     }
 
+    let slowest_test: Arc<Mutex<(f64, String)>> = Arc::new(Mutex::new((-1 as f64, "PLACEHOLDER".parse().unwrap())));
+    let errors = Arc::new(Mutex::new(vec![]));
     let before_testing = Instant::now();
-    read_dir(&input_dir).unwrap().collect::<Vec<_>>().par_iter().progress_with_style(style).for_each(
-    |file| {
+    read_dir(&input_dir).unwrap().collect::<Vec<_>>().par_iter().progress_with_style(style).for_each(|file| {
         let input_file = File::open(file.as_ref().unwrap().path()).unwrap();
+
+        let start = Instant::now();
         let mut child = Command::new(format!("./{}", &executable))
             .stdout(Stdio::piped())
             .stdin(input_file)
@@ -84,14 +88,25 @@ fn main() {
                 "The program timed out".to_string()
             }
         };
+        let test_time = start.elapsed().as_secs_f64();
 
-        let output_file = format!("{}/{}.out", &output_dir, file.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
+        let test_name = file.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap().to_string();
+        let clone = Arc::clone(&slowest_test);
+        let mut slowest_test_mutex = clone.lock().unwrap();
+        if test_time > slowest_test_mutex.0 {
+            *slowest_test_mutex = (test_time, test_name.clone());
+        }
+
+        let output_file = format!("{}/{}.out", &output_dir, test_name);
         if !args.generate {
             let output_file_contents = fs::read_to_string(Path::new(&output_file)).unwrap();
 
             if output_str.split_whitespace().collect::<Vec<&str>>() != output_file_contents.split_whitespace().collect::<Vec<&str>>() {
                 INCORRECT.inc();
-            } else {
+                let clone = Arc::clone(&errors);
+                clone.lock().unwrap().push((test_name, output_str, output_file_contents));
+            }
+            else {
                 CORRECT.inc();
             }
         }
@@ -101,11 +116,25 @@ fn main() {
     });
 
     if !args.generate {
-        println!("Testing finished in {:.2}s with {} and {}",
+        let slowest_test_clone = Arc::clone(&slowest_test);
+        let slowest_test_mutex = slowest_test_clone.lock().unwrap();
+        println!("Testing finished in {:.2}s with {} and {} (Slowest test {} at {:.3}s)",
                  before_testing.elapsed().as_secs_f64(),
                  Green.paint(format!("{} correct answers", CORRECT.get())),
-                 Red.paint(format!("{} incorrect answers", INCORRECT.get()))
-        )
+                 Red.paint(format!("{} incorrect answers", INCORRECT.get())),
+                 slowest_test_mutex.1,
+                 slowest_test_mutex.0
+        );
+
+        let errors_clone = Arc::clone(&errors);
+        let errors_mutex = errors_clone.lock().unwrap();
+        if !errors_mutex.is_empty() {
+            println!("Errors were found in the following tests:");
+
+            for (test_name, program_out, file_out) in errors_mutex.iter() {
+                println!("{}", test_name);
+            }
+        }
     }
     else {
         println!("Program finished in {:.2}s", before_testing.elapsed().as_secs_f64())
