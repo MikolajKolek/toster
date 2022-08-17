@@ -73,7 +73,6 @@ fn main() {
             .stdout(Stdio::piped())
             .stdin(input_file)
             .spawn().unwrap();
-            //.output().unwrap();
         let output_str = match child.wait_timeout(Duration::from_secs(args.timeout)).unwrap() {
             Some(_) => {
                 let mut res = String::new();
@@ -85,8 +84,6 @@ fn main() {
                 "The program timed out".to_string()
             }
         };
-
-        //let output_str = String::from_utf8(output.stdout).unwrap();
 
         let output_file = format!("{}/{}.out", &output_dir, file.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
         if !args.generate {
