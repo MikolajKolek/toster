@@ -64,7 +64,7 @@ fn main() {
         let output_file = format!("{}/{}.out", &output_dir, file.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
         let output_file_contents = fs::read_to_string(Path::new(&output_file)).unwrap();
 
-        if output_str != output_file_contents {
+        if output_str.split_whitespace().collect::<Vec<&str>>() != output_file_contents.split_whitespace().collect::<Vec<&str>>() {
             INCORRECT.inc();
         }
         else {
