@@ -2,9 +2,10 @@ use std::{fs};
 use std::env::current_dir;
 use std::fmt::{Write as FmtWrite};
 use std::fs::{File, read_dir};
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
-use std::time::{Instant};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 use ansi_term::Color::{Green, Red};
 use atomic_counter::{AtomicCounter, RelaxedCounter};
 use clap::Parser;
@@ -12,6 +13,7 @@ use indicatif::{ParallelProgressIterator, ProgressState, ProgressStyle};
 use lazy_static::lazy_static;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::prelude::*;
+use wait_timeout::ChildExt;
 
 /// A simple tester for competitive programming exercises
 #[derive(Parser, Debug)]
@@ -24,6 +26,14 @@ struct Args {
     /// Output directory
     #[clap(short, long, value_parser, default_value = "out")]
     out: String,
+
+    /// The number of seconds after which a test or generation times out if the program does not return
+    #[clap(short, long, value_parser, default_value = "5")]
+    timeout: u64,
+
+    /// Makes the tester generate output files in the output directory instead of comparing the program's output with the files in the output directory
+    #[clap(short, long, action)]
+    generate: bool,
 
     /// The name of the file containing the source code
     #[clap(value_parser)]
@@ -45,36 +55,62 @@ fn main() {
         .args(["-std=c++17", "-O3", "-static", &args.filename, "-o", &executable])
         .output().unwrap();
 
-    let style: ProgressStyle = ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{correct} {incorrect}")
+    let mut style: ProgressStyle = ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{correct} {incorrect}")
         .unwrap()
         .with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
-        .with_key("correct", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", Green.paint(format!("{} correct", &CORRECT.get()))).unwrap())
-        .with_key("incorrect", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", Red.paint(format!("{} incorrect", &INCORRECT.get()))).unwrap())
         .progress_chars("#>-");
+
+    if !args.generate {
+        style = style.with_key("correct", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", Green.paint(format!("{} correct", &CORRECT.get()))).unwrap())
+            .with_key("incorrect", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", Red.paint(format!("{} incorrect", &INCORRECT.get()))).unwrap());
+    }
 
     let before_testing = Instant::now();
     read_dir(&input_dir).unwrap().collect::<Vec<_>>().par_iter().progress_with_style(style).for_each(
     |file| {
         let input_file = File::open(file.as_ref().unwrap().path()).unwrap();
-        let output = Command::new(format!("./{}", &executable))
+        let mut child = Command::new(format!("./{}", &executable))
+            .stdout(Stdio::piped())
             .stdin(input_file)
-            .output().unwrap();
-        let output_str = String::from_utf8(output.stdout).unwrap();
+            .spawn().unwrap();
+            //.output().unwrap();
+        let output_str = match child.wait_timeout(Duration::from_secs(args.timeout)).unwrap() {
+            Some(_) => {
+                let mut res = String::new();
+                child.stdout.unwrap().read_to_string(&mut res).unwrap();
+                res
+            }
+            None => {
+                child.kill().unwrap();
+                "The program timed out".to_string()
+            }
+        };
+
+        //let output_str = String::from_utf8(output.stdout).unwrap();
 
         let output_file = format!("{}/{}.out", &output_dir, file.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
-        let output_file_contents = fs::read_to_string(Path::new(&output_file)).unwrap();
+        if !args.generate {
+            let output_file_contents = fs::read_to_string(Path::new(&output_file)).unwrap();
 
-        if output_str.split_whitespace().collect::<Vec<&str>>() != output_file_contents.split_whitespace().collect::<Vec<&str>>() {
-            INCORRECT.inc();
+            if output_str.split_whitespace().collect::<Vec<&str>>() != output_file_contents.split_whitespace().collect::<Vec<&str>>() {
+                INCORRECT.inc();
+            } else {
+                CORRECT.inc();
+            }
         }
         else {
-            CORRECT.inc();
+            fs::write(Path::new(&output_file), output_str).unwrap();
         }
     });
 
-    println!("Testing finished in {:.2}s with {} and {}",
-        before_testing.elapsed().as_secs_f64(),
-        Green.paint(format!("{} correct answers", CORRECT.get())),
-        Red.paint(format!("{} incorrect answers", INCORRECT.get()))
-    )
+    if !args.generate {
+        println!("Testing finished in {:.2}s with {} and {}",
+                 before_testing.elapsed().as_secs_f64(),
+                 Green.paint(format!("{} correct answers", CORRECT.get())),
+                 Red.paint(format!("{} incorrect answers", INCORRECT.get()))
+        )
+    }
+    else {
+        println!("Program finished in {:.2}s", before_testing.elapsed().as_secs_f64())
+    }
 }
