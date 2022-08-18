@@ -1,4 +1,5 @@
 use std::{fs};
+use std::cmp::max;
 use std::env::current_dir;
 use std::fmt::{Write as FmtWrite};
 use std::fs::{File, read_dir};
@@ -12,8 +13,11 @@ use atomic_counter::{AtomicCounter, RelaxedCounter};
 use clap::Parser;
 use indicatif::{ParallelProgressIterator, ProgressState, ProgressStyle};
 use lazy_static::lazy_static;
-use rayon::iter::IntoParallelRefIterator;
+use rayon::iter::{IntoParallelRefIterator};
 use rayon::prelude::*;
+use term_table::{Table, TableStyle};
+use term_table::row::Row;
+use term_table::table_cell::{Alignment, TableCell};
 use wait_timeout::ChildExt;
 
 /// A simple tester for competitive programming exercises
@@ -37,7 +41,7 @@ struct Args {
     generate: bool,
 
     /// The name of the file containing the source code
-    #[clap(value_parser)]
+    #[clap(value_parser, default_value = "dom.cpp")]
     filename: String
 }
 
@@ -115,10 +119,12 @@ fn main() {
         }
     });
 
+
+
+    let slowest_test_clone = Arc::clone(&slowest_test);
+    let slowest_test_mutex = slowest_test_clone.lock().unwrap();
     if !args.generate {
-        let slowest_test_clone = Arc::clone(&slowest_test);
-        let slowest_test_mutex = slowest_test_clone.lock().unwrap();
-        println!("Testing finished in {:.2}s with {} and {} (Slowest test {} at {:.3}s)",
+        println!("Testing finished in {:.2}s with {} and {}: (Slowest test: {} at {:.3}s)",
                  before_testing.elapsed().as_secs_f64(),
                  Green.paint(format!("{} correct answers", CORRECT.get())),
                  Red.paint(format!("{} incorrect answers", INCORRECT.get())),
@@ -132,11 +138,51 @@ fn main() {
             println!("Errors were found in the following tests:");
 
             for (test_name, program_out, file_out) in errors_mutex.iter() {
-                println!("{}", test_name);
+                println!("Test {}:", test_name);
+
+                let split_file = file_out.split("\n").collect::<Vec<_>>();
+                let split_out = program_out.split("\n").collect::<Vec<_>>();
+                if max(split_file.len(), split_out.len()) <= 100 {
+                    let mut table = Table::new();
+                    table.max_column_width = 40;
+                    table.style = TableStyle::extended();
+
+                    table.add_row(Row::new(vec![
+                        TableCell::new(Green.paint("Output file")),
+                        TableCell::new_with_alignment(Red.paint("Your program's output"), 1, Alignment::Right)
+                    ]));
+
+                    for i in 0..max(split_file.len(), split_out.len()) {
+                        let file_segment = if split_file.len() > i { split_file[i] } else { "" };
+                        let out_segment = if split_out.len() > i { split_out[i] } else { "" };
+
+                        if file_segment != out_segment {
+                            table.add_row(Row::new(vec![
+                                TableCell::new(Green.paint(file_segment)),
+                                TableCell::new_with_alignment(Red.paint(out_segment), 1, Alignment::Right)
+                            ]));
+                        }
+                        else {
+                            table.add_row(Row::new(vec![
+                                TableCell::new(file_segment),
+                                TableCell::new_with_alignment(out_segment, 1, Alignment::Right)
+                            ]));
+                        }
+                    }
+
+                    println!("{}", table.render());
+                }
+                else {
+                    println!("{}", Red.paint(""))
+                }
             }
         }
     }
     else {
-        println!("Program finished in {:.2}s", before_testing.elapsed().as_secs_f64())
+        println!("Program finished in {:.2}s (Slowest test: {} at {:.3}s)",
+                 before_testing.elapsed().as_secs_f64(),
+                 slowest_test_mutex.1,
+                 slowest_test_mutex.0
+        )
     }
 }
