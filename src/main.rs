@@ -52,9 +52,8 @@ lazy_static! {
 
 fn main() {
     let args = Args::parse();
-    let workspace_dir = current_dir().unwrap().to_str().unwrap().to_string();
-    let input_dir: String = format!("{}/{}", &workspace_dir, args.r#in);
-    let output_dir: String = format!("{}/{}", &workspace_dir, args.out);
+    let input_dir: String = format!("{}/{}", current_dir().unwrap().to_str().unwrap(), args.r#in);
+    let output_dir: String = format!("{}/{}", current_dir().unwrap().to_str().unwrap(), args.out);
     let executable = format!("{}.o", Path::new(&args.filename).file_stem().unwrap().to_str().unwrap());
 
     Command::new("g++")

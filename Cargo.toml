@@ -1,8 +1,5 @@
 [package]
 name = "tester"
-description = "A simple tester for competitive programming exercises"
-repository = "https://github.com/MikolajKolek/tester"
-license = "MIT"
 version = "0.1.0"
 edition = "2021"
 
