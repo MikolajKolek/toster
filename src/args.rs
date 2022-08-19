@@ -1,6 +1,6 @@
 use clap::Parser;
 
-/// A simple tester for competitive programming exercises
+/// A simple tester for C++ solutions to competitive programming exercises
 #[derive(Parser, Debug)]
 #[clap(name = "Tester", version, about, long_about = None)]
 pub struct Args {
