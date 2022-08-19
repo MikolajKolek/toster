@@ -1,55 +1,30 @@
 mod args;
 mod test_result;
+mod testing_utils;
 
 use std::{fs};
 use std::env::current_dir;
 use std::fmt::{Write as FmtWrite};
-use std::fs::{DirEntry, File, read_dir};
-use std::path::{Path, PathBuf};
-use std::process::{Command};
+use std::fs::{File, read_dir};
+use std::path::{Path};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Instant};
 use atomic_counter::{AtomicCounter, RelaxedCounter};
 use indicatif::{ParallelProgressIterator, ProgressState, ProgressStyle};
 use lazy_static::lazy_static;
 use rayon::iter::{IntoParallelRefIterator};
 use rayon::prelude::*;
 use tempfile::{tempdir};
-use wait_timeout::ChildExt;
 use args::Args;
 use clap::Parser;
 use colored::Colorize;
 use crate::test_result::TestResult;
-use crate::TestResult::{NoOutputFile, TimedOut, Incorrect};
+use crate::testing_utils::{compile_cpp, generate_output, run_test};
+use crate::TestResult::{Correct, Error, Incorrect};
 
 lazy_static! {
     static ref CORRECT: RelaxedCounter = RelaxedCounter::new(0);
     static ref INCORRECT: RelaxedCounter = RelaxedCounter::new(0);
-}
-
-fn compile_cpp(source_code_file: PathBuf) -> Result<String, String> {
-	let source_code_folder = source_code_file.parent().expect("The source code is in an invalid folder!");
-	let executable_file_base = source_code_folder.join(source_code_file.file_stem().expect("The provided filename is invalid!"));
-	let executable_file = format!("{}.o", executable_file_base.to_str().expect("The provided filename is invalid!"));
-	let tempdir = tempdir().expect("Failed to create temporary directory!");
-	let compilation_result_path = tempdir.path().join(format!("{}.out", executable_file_base.to_str().expect("The provided filename is invalid!")));
-	let compilation_result = File::create(&compilation_result_path).expect("Failed to create temporary file!");
-
-	let time_before_compilation = Instant::now();
-	Command::new("g++")
-		.args(["-std=c++17", "-O3", "-static", source_code_file.to_str().expect("The provided filename is invalid!"), "-o", &executable_file])
-		.stderr(compilation_result)
-		.spawn().expect("g++ failed to start").wait_timeout(Duration::from_secs(10)).expect("Compilation took too long!");
-	let compilation_time = time_before_compilation.elapsed().as_secs_f64();
-
-	let compilation_result = fs::read_to_string(&compilation_result_path).expect("Failed to read G++ output");
-	return if !compilation_result.is_empty() {
-		Err(compilation_result)
-	}
-	else {
-		println!("{}", format!("Compilation completed in {:.2}s", compilation_time).green());
-		Ok(executable_file)
-	}
 }
 
 fn main() {
@@ -74,7 +49,7 @@ fn main() {
 
 	// Compiling
 	let executable: String;
-	match compile_cpp(Path::new(&args.filename).to_path_buf()) {
+	match compile_cpp(Path::new(&args.filename).to_path_buf(), &tempdir) {
 		Ok(result) => { executable = result }
 		Err(error) => {
 			println!("{}", "Compilation failed with the following errors:".red());
@@ -83,6 +58,7 @@ fn main() {
 		}
 	}
 
+	// Progress bar styling
 	let mut style: ProgressStyle = ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{correct} {incorrect}")
 		.expect("Progress bar creation failed!")
 		.with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed!"))
@@ -92,80 +68,50 @@ fn main() {
 			.with_key("incorrect", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", format!("{} incorrect", &INCORRECT.get()).red()).expect("Displaying the progress bar failed!"));
 	}
 
-	let slowest_test: Arc<Mutex<(f64, String)>> = Arc::new(Mutex::new((-1 as f64, String::new())));
-	let errors: Arc<Mutex<Vec<TestResult>>> = Arc::new(Mutex::new(vec![]));
-	let before_testing = Instant::now();
+	// Running tests / generating output
+	let slowest_test = Arc::new(Mutex::new((-1 as f64, String::new())));
+	let errors = Arc::new(Mutex::new(vec![]));
+	let time_before_testing = Instant::now();
 	read_dir(&input_dir).expect("Cannot open input directory!").collect::<Vec<_>>().par_iter().progress_with_style(style).for_each(|input| {
-		let file: &DirEntry = input.as_ref().expect("Failed to acquire reference!");
-		let file_path = file.path().to_string_lossy().to_string();
-		let test_name = file.path().file_stem().expect(&*format!("The input file {} is invalid!", file_path)).to_str().expect(&*format!("The input file {} is invalid!", file_path)).to_string();
-		let input_file = File::open(file.path()).expect(&*format!("Could not open input file {}", file_path));
-		let output_file = format!("{}/{}.out", &output_dir, test_name);
+		let input_file_entry = input.as_ref().expect("Failed to acquire reference!");
+		let input_file_path = input_file_entry.path().to_string_lossy().to_string();
+		let test_name = input_file_entry.path().file_stem().expect(&*format!("The input file {} is invalid!", input_file_path)).to_str().expect(&*format!("The input file {} is invalid!", input_file_path)).to_string();
 
-		let test_output_file_path = if args.generate {
-			Path::new(&output_file).to_path_buf()
-		}
-		else  {
-			tempdir.path().join(format!("{}.out", test_name))
-		};
-		let test_output_file = File::create(&test_output_file_path).expect("Failed to create temporary file!");
+		let test_time: f64;
+		if args.generate {
+			let input_file = File::open(input_file_entry.path()).expect(&*format!("Could not open input file {}", input_file_path));
+			let output_file_path = format!("{}/{}.out", &output_dir, test_name);
+			let output_file = File::create(Path::new(&output_file_path)).expect("Failed to create output file!");
 
-		let start = Instant::now();
-		let mut child = Command::new(format!("./{}", &executable))
-			.stdout(test_output_file)
-			.stdin(input_file)
-			.spawn().expect("Failed to run compiled file!");
-		let timed_out = match child.wait_timeout(Duration::from_secs(args.timeout)).unwrap() {
-			Some(_) => false,
-			None => {
-				child.kill().unwrap();
-				true
-			}
-		};
-		let test_time = start.elapsed().as_secs_f64();
-		let output: String = fs::read_to_string(&test_output_file_path).expect("Failed to read temporary file!");
-
-
-		let slowest_test_clone = Arc::clone(&slowest_test);
-		let mut slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");		if test_time > slowest_test_mutex.0 {
-			*slowest_test_mutex = (test_time, test_name.clone());
-		}
-
-		if timed_out {
-			if args.generate {
-				fs::remove_file(&test_output_file_path).expect("Failed to remove output file from timed-out test");
-			}
-
-			INCORRECT.inc();
-			let clone = Arc::clone(&errors);
-			clone.lock().expect("Failed to acquire mutex!").push(TimedOut {test_name});
-			return;
-		}
-
-		if !args.generate {
-			if !Path::new(&output_file).is_file() {
-				INCORRECT.inc();
+			test_time = generate_output(&executable, input_file, output_file, &args.timeout);
+			if test_time == args.timeout as f64 {
 				let clone = Arc::clone(&errors);
-				clone.lock().expect("Failed to acquire mutex!").push(NoOutputFile {test_name});
-				return;
+				clone.lock().expect("Failed to acquire mutex!").push(Error {test_name: test_name.clone(), error_message: "Timed out".to_string()});
 			}
+		}
+		else {
+			let (result, time) = run_test(&executable, &input_dir, &output_dir, &test_name, &tempdir, &args.timeout);
+			test_time = time;
 
-			let output_file_contents = fs::read_to_string(Path::new(&output_file)).expect("Failed to read output file!");
-			if output.split_whitespace().collect::<Vec<&str>>() != output_file_contents.split_whitespace().collect::<Vec<&str>>() {
-				INCORRECT.inc();
-				let clone = Arc::clone(&errors);
-				clone.lock().expect("Failed to acquire mutex!").push(Incorrect {test_name, correct_answer: output_file_contents, incorrect_answer: output});
-			}
-			else {
+			if let Correct { .. } = result {
 				CORRECT.inc();
 			}
+			else {
+				INCORRECT.inc();
+				let clone = Arc::clone(&errors);
+				clone.lock().expect("Failed to acquire mutex!").push(result);
+			}
+		}
+
+		let slowest_test_clone = Arc::clone(&slowest_test);
+		let mut slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");
+		if test_time > slowest_test_mutex.0 {
+			*slowest_test_mutex = (test_time, test_name.clone());
 		}
 	});
 
-
-
 	// Printing the output
-	let testing_time = before_testing.elapsed().as_secs_f64();
+	let testing_time = time_before_testing.elapsed().as_secs_f64();
 	let slowest_test_clone = Arc::clone(&slowest_test);
 	let errors_clone = Arc::clone(&errors);
 	let slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");

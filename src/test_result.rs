@@ -13,11 +13,9 @@ pub enum TestResult {
 		correct_answer: String,
 		incorrect_answer: String
 	},
-	TimedOut {
-		test_name: String
-	},
-	NoOutputFile {
-		test_name: String
+	Error {
+		test_name: String,
+		error_message: String
 	}
 }
 
@@ -66,13 +64,9 @@ impl TestResult {
 					result.push_str(&table.to_string());
 				}
 			}
-			TestResult::TimedOut { test_name } => {
+			TestResult::Error { test_name, error_message } => {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
-				result.push_str(&format!("{}", "Timed out".red()));
-			}
-			TestResult::NoOutputFile {test_name} => {
-				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
-				result.push_str(&format!("{}", "No output file found".red()));
+				result.push_str(&format!("{}", error_message.red()));
 			}
 		}
 
