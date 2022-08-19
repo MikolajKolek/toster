@@ -4,7 +4,10 @@ use comfy_table::ContentArrangement::Dynamic;
 use comfy_table::{Attribute, Cell, Color, Table};
 use terminal_size::{Height, Width};
 
-pub enum TestError {
+pub enum TestResult {
+	Correct {
+		test_name: String
+	},
 	Incorrect {
 		test_name: String,
 		correct_answer: String,
@@ -18,12 +21,16 @@ pub enum TestError {
 	}
 }
 
-impl TestError {
+impl TestResult {
 	pub fn to_string(&self) -> String {
 		let mut result: String = String::new();
 
 		match self {
-			TestError::Incorrect {test_name, correct_answer, incorrect_answer} => {
+			TestResult::Correct {test_name} => {
+				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
+				result.push_str(&format!("{}", "Timed out".red()));
+			}
+			TestResult::Incorrect {test_name, correct_answer, incorrect_answer} => {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
 
 				let split_correct = correct_answer.split("\n").collect::<Vec<_>>();
@@ -59,11 +66,11 @@ impl TestError {
 					result.push_str(&table.to_string());
 				}
 			}
-			TestError::TimedOut { test_name } => {
+			TestResult::TimedOut { test_name } => {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
 				result.push_str(&format!("{}", "Timed out".red()));
 			}
-			TestError::NoOutputFile {test_name} => {
+			TestResult::NoOutputFile {test_name} => {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
 				result.push_str(&format!("{}", "No output file found".red()));
 			}
