@@ -1,7 +1,7 @@
 mod args;
+mod test_error;
 
 use std::{fs};
-use std::cmp::max;
 use std::env::current_dir;
 use std::fmt::{Write as FmtWrite};
 use std::fs::{DirEntry, File, read_dir};
@@ -18,22 +18,13 @@ use tempfile::tempdir;
 use wait_timeout::ChildExt;
 use args::Args;
 use clap::Parser;
-use comfy_table::{Attribute, Cell, Color, Table};
-use comfy_table::ContentArrangement::Dynamic;
-use terminal_size;
 use colored::Colorize;
-use terminal_size::{Height, Width};
-use crate::TestError::{Incorrect, NoOutputFile, TimedOut};
+use crate::test_error::TestError;
+use crate::TestError::{NoOutputFile, TimedOut, Incorrect};
 
 lazy_static! {
     static ref CORRECT: RelaxedCounter = RelaxedCounter::new(0);
     static ref INCORRECT: RelaxedCounter = RelaxedCounter::new(0);
-}
-
-enum TestError {
-	Incorrect,
-	TimedOut,
-	NoOutputFile
 }
 
 fn main() {
@@ -79,7 +70,7 @@ fn main() {
 	}
 
 	let slowest_test: Arc<Mutex<(f64, String)>> = Arc::new(Mutex::new((-1 as f64, String::new())));
-	let errors: Arc<Mutex<Vec<(String, String, String, TestError)>>> = Arc::new(Mutex::new(vec![]));
+	let errors: Arc<Mutex<Vec<TestError>>> = Arc::new(Mutex::new(vec![]));
 	let before_testing = Instant::now();
 	read_dir(&input_dir).expect("Cannot open input directory!").collect::<Vec<_>>().par_iter().progress_with_style(style).for_each(|input| {
 		let file: &DirEntry = input.as_ref().expect("Failed to acquire reference!");
@@ -104,7 +95,6 @@ fn main() {
 		let timed_out = match child.wait_timeout(Duration::from_secs(args.timeout)).unwrap() {
 			Some(_) => false,
 			None => {
-				// child hasn't exited yet
 				child.kill().unwrap();
 				true
 			}
@@ -125,7 +115,7 @@ fn main() {
 
 			INCORRECT.inc();
 			let clone = Arc::clone(&errors);
-			clone.lock().expect("Failed to acquire mutex!").push((test_name, "".to_string(), "".to_string(), TimedOut));
+			clone.lock().expect("Failed to acquire mutex!").push(TimedOut { test_name });
 			return;
 		}
 
@@ -133,7 +123,7 @@ fn main() {
 			if !Path::new(&output_file).is_file() {
 				INCORRECT.inc();
 				let clone = Arc::clone(&errors);
-				clone.lock().expect("Failed to acquire mutex!").push((test_name, "".to_string(), "".to_string(), NoOutputFile));
+				clone.lock().expect("Failed to acquire mutex!").push(/*"".to_string(), "".to_string(), "".to_string(), */NoOutputFile {test_name});
 				return;
 			}
 
@@ -141,15 +131,13 @@ fn main() {
 			if output.split_whitespace().collect::<Vec<&str>>() != output_file_contents.split_whitespace().collect::<Vec<&str>>() {
 				INCORRECT.inc();
 				let clone = Arc::clone(&errors);
-				clone.lock().expect("Failed to acquire mutex!").push((test_name, output, output_file_contents, Incorrect));
+				clone.lock().expect("Failed to acquire mutex!").push(/*test_name, output, output_file_contents,*/ /*"".to_string(), "".to_string(), "".to_string(), */Incorrect {test_name, correct_answer: output_file_contents, incorrect_answer: output });
 			}
 			else {
 				CORRECT.inc();
 			}
 		}
 	});
-
-
 
 	let slowest_test_clone = Arc::clone(&slowest_test);
 	let slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");
@@ -167,52 +155,8 @@ fn main() {
 		if !errors_mutex.is_empty() {
 			println!("Errors were found in the following tests:");
 
-			for (test_name, program_out, file_out, test_error) in errors_mutex.iter() {
-				println!("Test {}:", test_name);
-
-				if matches!(test_error, TimedOut) {
-					println!("{}", "Timed out".red());
-					continue;
-				}
-				else if matches!(test_error, NoOutputFile) {
-					println!("{}", "No output file found".red());
-					continue;
-				}
-
-				let split_file = file_out.split("\n").collect::<Vec<_>>();
-				let split_out = program_out.split("\n").collect::<Vec<_>>();
-				if max(split_file.len(), split_out.len()) <= 100 {
-					let (Width(w), Height(_)) = terminal_size::terminal_size().unwrap_or((Width(40), Height(0)));
-
-					let mut table = Table::new();
-					table
-						.set_content_arrangement(Dynamic)
-						.set_width(w)
-						.set_header(vec![
-							Cell::new("Output file").add_attribute(Attribute::Bold).fg(Color::Green),
-							Cell::new("Your program's output").add_attribute(Attribute::Bold).fg(Color::Red)
-						]);
-
-					for i in 0..max(split_file.len(), split_out.len()) {
-						let file_segment = if split_file.len() > i { split_file[i] } else { "" };
-						let out_segment = if split_out.len() > i { split_out[i] } else { "" };
-
-						if file_segment != out_segment {
-							table.add_row(vec![
-								Cell::new(file_segment).fg(Color::Green),
-								Cell::new(out_segment).fg(Color::Red)
-							]);
-						}
-						else {
-							table.add_row(vec![file_segment, out_segment]);
-						}
-					}
-
-					println!("{table}");
-				}
-				else {
-					println!("{}", "Output too large to show".red())
-				}
+			for test_error in errors_mutex.iter() {
+				println!("{}", test_error.to_string());
 			}
 		}
 	}
@@ -226,13 +170,8 @@ fn main() {
 		if !errors_mutex.is_empty() {
 			println!("Errors were found in the following tests:");
 
-			for (test_name, _, _, test_error) in errors_mutex.iter() {
-				println!("Test {}:", test_name);
-
-				if matches!(test_error, TimedOut) {
-					println!("{}", "Timed out".red());
-					continue;
-				}
+			for test_error in errors_mutex.iter() {
+				println!("{}", test_error.to_string());
 			}
 		}
 	}
