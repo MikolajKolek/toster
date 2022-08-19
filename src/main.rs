@@ -4,12 +4,11 @@ use std::{fs};
 use std::cmp::max;
 use std::env::current_dir;
 use std::fmt::{Write as FmtWrite};
-use std::fs::{File, read_dir};
+use std::fs::{DirEntry, File, read_dir};
 use std::path::Path;
 use std::process::{Command};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use ansi_term::Color::{Green, Red};
 use atomic_counter::{AtomicCounter, RelaxedCounter};
 use indicatif::{ParallelProgressIterator, ProgressState, ProgressStyle};
 use lazy_static::lazy_static;
@@ -22,140 +21,219 @@ use clap::Parser;
 use comfy_table::{Attribute, Cell, Color, Table};
 use comfy_table::ContentArrangement::Dynamic;
 use terminal_size;
+use colored::Colorize;
+use terminal_size::{Height, Width};
+use crate::TestError::{Incorrect, NoOutputFile, TimedOut};
 
 lazy_static! {
     static ref CORRECT: RelaxedCounter = RelaxedCounter::new(0);
     static ref INCORRECT: RelaxedCounter = RelaxedCounter::new(0);
 }
 
+enum TestError {
+	Incorrect,
+	TimedOut,
+	NoOutputFile
+}
+
 fn main() {
-    let args = Args::parse();
-    let workspace_dir = current_dir().unwrap().to_str().unwrap().to_string();
-    let input_dir: String = format!("{}/{}", &workspace_dir, args.r#in);
-    let output_dir: String = format!("{}/{}", &workspace_dir, args.out);
-    let executable = format!("{}.o", Path::new(&args.filename).file_stem().unwrap().to_str().unwrap());
+	let args = Args::parse();
+	let workspace_dir = current_dir().expect("The current directory is invalid!").to_str().expect("The current directory is invalid!").to_string();
+	let input_dir: String = format!("{}/{}", &workspace_dir, args.r#in);
+	let output_dir: String = format!("{}/{}", &workspace_dir, args.out);
+	let executable = format!("{}.o", Path::new(&args.filename).file_stem().expect("The provided filename is invalid!").to_str().expect("The provided filename is invalid!"));
+	let tempdir = tempdir().expect("Failed to create temporary directory");
 
-    // Compilation
-    Command::new("g++")
-        .args(["-std=c++17", "-O3", "-static", &args.filename, "-o", &executable])
-        .output().unwrap();
+	if !Path::new(&input_dir).is_dir() { println!("{}", "The input directory does not exist".red()); return; }
+	if args.generate && !Path::new(&output_dir).is_dir() {
+		fs::create_dir(&output_dir).expect("Failed to create output directory!");
+	}
+	else {
+		if !Path::new(&output_dir).is_dir() { println!("{}", "The output directory does not exist".red());return; }
+	}
+	if !Path::new(&args.filename).is_file() { println!("{}", "The source code file does not exist".red()); return; }
 
-    let mut style: ProgressStyle = ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{correct} {incorrect}")
-        .unwrap()
-        .with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
-        .progress_chars("#>-");
-    if !args.generate {
-        style = style.with_key("correct", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", Green.paint(format!("{} correct", &CORRECT.get()))).unwrap())
-            .with_key("incorrect", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", Red.paint(format!("{} incorrect", &INCORRECT.get()))).unwrap());
-    }
+	let compilation_tempfile_path = tempdir.path().join(format!("{}.out", executable));
+	let compilation_tempfile = File::create(&compilation_tempfile_path).expect("Failed to create temporary file!");
+	let time_before_compilation = Instant::now();
+	Command::new("g++")
+		.args(["-std=c++17", "-O3", "-static", &args.filename, "-o", &executable])
+		.stderr(compilation_tempfile)
+		.spawn().expect("g++ failed to start").wait_timeout(Duration::from_secs(10)).expect("Compilation took too long!");
+	let gpp_out = fs::read_to_string(compilation_tempfile_path).expect("Failed to read temporary file!");
+	if !gpp_out.is_empty() {
+		println!("{}\n{}", "Compilation failed with the following errors:".red(), gpp_out);
+		return;
+	}
+	else {
+		println!("{}", format!("Compilation completed in {:.2}s", time_before_compilation.elapsed().as_secs_f64()).green())
+	}
 
-    let slowest_test: Arc<Mutex<(f64, String)>> = Arc::new(Mutex::new((-1 as f64, "PLACEHOLDER".parse().unwrap())));
-    let errors: Arc<Mutex<Vec<(String, String, String)>>> = Arc::new(Mutex::new(vec![]));
-    let before_testing = Instant::now();
-    read_dir(&input_dir).unwrap().collect::<Vec<_>>().par_iter().progress_with_style(style).for_each(|file| {
-        let test_name = file.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap().to_string();
+	let mut style: ProgressStyle = ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{correct} {incorrect}")
+		.expect("Progress bar creation failed!")
+		.with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed!"))
+		.progress_chars("#>-");
+	if !args.generate {
+		style = style.with_key("correct", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", format!("{} correct", &CORRECT.get()).green()).expect("Displaying the progress bar failed!"))
+			.with_key("incorrect", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", format!("{} incorrect", &INCORRECT.get()).red()).expect("Displaying the progress bar failed!"));
+	}
 
-        let input_file = File::open(file.as_ref().unwrap().path()).unwrap();
-        let tempdir = tempdir().unwrap();
-        let tempfile_path = tempdir.path().join(format!("{}.out", test_name));
-        let tempfile = File::create(&tempfile_path).unwrap();
+	let slowest_test: Arc<Mutex<(f64, String)>> = Arc::new(Mutex::new((-1 as f64, String::new())));
+	let errors: Arc<Mutex<Vec<(String, String, String, TestError)>>> = Arc::new(Mutex::new(vec![]));
+	let before_testing = Instant::now();
+	read_dir(&input_dir).expect("Cannot open input directory!").collect::<Vec<_>>().par_iter().progress_with_style(style).for_each(|input| {
+		let file: &DirEntry = input.as_ref().expect("Failed to acquire reference!");
+		let file_path = file.path().to_string_lossy().to_string();
+		let test_name = file.path().file_stem().expect(&*format!("The input file {} is invalid!", file_path)).to_str().expect(&*format!("The input file {} is invalid!", file_path)).to_string();
+		let input_file = File::open(file.path()).expect(&*format!("Could not open input file {}", file_path));
+		let output_file = format!("{}/{}.out", &output_dir, test_name);
 
-        let start = Instant::now();
-        Command::new(format!("./{}", &executable))
-            .stdout(tempfile)
-            .stdin(input_file)
-            .spawn().unwrap().wait_timeout(Duration::from_secs(args.timeout)).unwrap();
+		let test_output_file_path = if args.generate {
+			Path::new(&output_file).to_path_buf()
+		}
+		else  {
+			tempdir.path().join(format!("{}.out", test_name))
+		};
+		let test_output_file = File::create(&test_output_file_path).expect("Failed to create temporary file!");
 
-        let output_str: String = fs::read_to_string(tempfile_path).unwrap();
-        let test_time = start.elapsed().as_secs_f64();
+		let start = Instant::now();
+		let mut child = Command::new(format!("./{}", &executable))
+			.stdout(test_output_file)
+			.stdin(input_file)
+			.spawn().expect("Failed to run compiled file!");
+		let timed_out = match child.wait_timeout(Duration::from_secs(args.timeout)).unwrap() {
+			Some(_) => false,
+			None => {
+				// child hasn't exited yet
+				child.kill().unwrap();
+				true
+			}
+		};
+		let test_time = start.elapsed().as_secs_f64();
+		let output: String = fs::read_to_string(&test_output_file_path).expect("Failed to read temporary file!");
 
-        let clone = Arc::clone(&slowest_test);
-        let mut slowest_test_mutex = clone.lock().unwrap();
-        if test_time > slowest_test_mutex.0 {
-            *slowest_test_mutex = (test_time, test_name.clone());
-        }
+		let clone = Arc::clone(&slowest_test);
+		let mut slowest_test_mutex = clone.lock().expect("Failed to acquire mutex!");
+		if test_time > slowest_test_mutex.0 {
+			*slowest_test_mutex = (test_time, test_name.clone());
+		}
 
-        let output_file = format!("{}/{}.out", &output_dir, test_name);
-        if !args.generate {
-            let output_file_contents = fs::read_to_string(Path::new(&output_file)).unwrap();
+		if timed_out {
+			if args.generate {
+				fs::remove_file(&test_output_file_path).expect("Failed to remove output file from timed-out test");
+			}
 
-            if output_str.split_whitespace().collect::<Vec<&str>>() != output_file_contents.split_whitespace().collect::<Vec<&str>>() {
-                INCORRECT.inc();
-                let clone = Arc::clone(&errors);
-                clone.lock().unwrap().push((test_name, output_str, output_file_contents));
-            }
-            else {
-                CORRECT.inc();
-            }
-        }
-        else {
-            fs::write(Path::new(&output_file), output_str).unwrap();
-        }
-    });
+			INCORRECT.inc();
+			let clone = Arc::clone(&errors);
+			clone.lock().expect("Failed to acquire mutex!").push((test_name, "".to_string(), "".to_string(), TimedOut));
+			return;
+		}
+
+		if !args.generate {
+			if !Path::new(&output_file).is_file() {
+				INCORRECT.inc();
+				let clone = Arc::clone(&errors);
+				clone.lock().expect("Failed to acquire mutex!").push((test_name, "".to_string(), "".to_string(), NoOutputFile));
+				return;
+			}
+
+			let output_file_contents = fs::read_to_string(Path::new(&output_file)).expect("Failed to read output file!");
+			if output.split_whitespace().collect::<Vec<&str>>() != output_file_contents.split_whitespace().collect::<Vec<&str>>() {
+				INCORRECT.inc();
+				let clone = Arc::clone(&errors);
+				clone.lock().expect("Failed to acquire mutex!").push((test_name, output, output_file_contents, Incorrect));
+			}
+			else {
+				CORRECT.inc();
+			}
+		}
+	});
 
 
 
-    let slowest_test_clone = Arc::clone(&slowest_test);
-    let slowest_test_mutex = slowest_test_clone.lock().unwrap();
-    if !args.generate {
-        println!("Testing finished in {:.2}s with {} and {}: (Slowest test: {} at {:.3}s)",
-                 before_testing.elapsed().as_secs_f64(),
-                 Green.paint(format!("{} correct answers", CORRECT.get())),
-                 Red.paint(format!("{} incorrect answers", INCORRECT.get())),
-                 slowest_test_mutex.1,
-                 slowest_test_mutex.0
-        );
+	let slowest_test_clone = Arc::clone(&slowest_test);
+	let slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");
+	let errors_clone = Arc::clone(&errors);
+	let errors_mutex = errors_clone.lock().expect("Failed to acquire mutex!");
+	if !args.generate {
+		println!("Testing finished in {:.2}s with {} and {}: (Slowest test: {} at {:.3}s)",
+		         before_testing.elapsed().as_secs_f64(),
+		         format!("{} correct answers", CORRECT.get()).green(),
+		         format!("{} incorrect answers", INCORRECT.get()).red(),
+		         slowest_test_mutex.1,
+		         slowest_test_mutex.0
+		);
 
-        let errors_clone = Arc::clone(&errors);
-        let errors_mutex = errors_clone.lock().unwrap();
-        if !errors_mutex.is_empty() {
-            println!("Errors were found in the following tests:");
+		if !errors_mutex.is_empty() {
+			println!("Errors were found in the following tests:");
 
-            for (test_name, program_out, file_out) in errors_mutex.iter() {
-                println!("Test {}:", test_name);
+			for (test_name, program_out, file_out, test_error) in errors_mutex.iter() {
+				println!("Test {}:", test_name);
 
-                let split_file = file_out.split("\n").collect::<Vec<_>>();
-                let split_out = program_out.split("\n").collect::<Vec<_>>();
-                if max(split_file.len(), split_out.len()) <= 100 {
-                    let (terminal_size::Width(w), terminal_size::Height(_)) = terminal_size::terminal_size().unwrap();
+				if matches!(test_error, TimedOut) {
+					println!("{}", "Timed out".red());
+					continue;
+				}
+				else if matches!(test_error, NoOutputFile) {
+					println!("{}", "No output file found".red());
+					continue;
+				}
 
-                    let mut table = Table::new();
-                    table
-                        .set_content_arrangement(Dynamic)
-                        .set_width(w)
-                        .set_header(vec![
-                            Cell::new("Output file").add_attribute(Attribute::Bold).fg(Color::Green),
-                            Cell::new("Your program's output").add_attribute(Attribute::Bold).fg(Color::Red)
-                        ]);
+				let split_file = file_out.split("\n").collect::<Vec<_>>();
+				let split_out = program_out.split("\n").collect::<Vec<_>>();
+				if max(split_file.len(), split_out.len()) <= 100 {
+					let (Width(w), Height(_)) = terminal_size::terminal_size().unwrap_or((Width(40), Height(0)));
 
-                    for i in 0..max(split_file.len(), split_out.len()) {
-                        let file_segment = if split_file.len() > i { split_file[i] } else { "" };
-                        let out_segment = if split_out.len() > i { split_out[i] } else { "" };
+					let mut table = Table::new();
+					table
+						.set_content_arrangement(Dynamic)
+						.set_width(w)
+						.set_header(vec![
+							Cell::new("Output file").add_attribute(Attribute::Bold).fg(Color::Green),
+							Cell::new("Your program's output").add_attribute(Attribute::Bold).fg(Color::Red)
+						]);
 
-                        if file_segment != out_segment {
-                            table.add_row(vec![
-                                Cell::new(file_segment).fg(Color::Green),
-                                Cell::new(out_segment).fg(Color::Red)
-                            ]);
-                        }
-                        else {
-                            table.add_row(vec![file_segment, out_segment]);
-                        }
-                    }
+					for i in 0..max(split_file.len(), split_out.len()) {
+						let file_segment = if split_file.len() > i { split_file[i] } else { "" };
+						let out_segment = if split_out.len() > i { split_out[i] } else { "" };
 
-                    println!("{table}");
-                }
-                else {
-                    println!("{}", Red.paint("Output too large to show"))
-                }
-            }
-        }
-    }
-    else {
-        println!("Program finished in {:.2}s (Slowest test: {} at {:.3}s)",
-                 before_testing.elapsed().as_secs_f64(),
-                 slowest_test_mutex.1,
-                 slowest_test_mutex.0
-        )
-    }
+						if file_segment != out_segment {
+							table.add_row(vec![
+								Cell::new(file_segment).fg(Color::Green),
+								Cell::new(out_segment).fg(Color::Red)
+							]);
+						}
+						else {
+							table.add_row(vec![file_segment, out_segment]);
+						}
+					}
+
+					println!("{table}");
+				}
+				else {
+					println!("{}", "Output too large to show".red())
+				}
+			}
+		}
+	}
+	else {
+		println!("Program finished in {:.2}s (Slowest test: {} at {:.3}s)",
+		         before_testing.elapsed().as_secs_f64(),
+		         slowest_test_mutex.1,
+		         slowest_test_mutex.0
+		);
+
+		if !errors_mutex.is_empty() {
+			println!("Errors were found in the following tests:");
+
+			for (test_name, _, _, test_error) in errors_mutex.iter() {
+				println!("Test {}:", test_name);
+
+				if matches!(test_error, TimedOut) {
+					println!("{}", "Timed out".red());
+					continue;
+				}
+			}
+		}
+	}
 }

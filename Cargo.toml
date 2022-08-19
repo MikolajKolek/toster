@@ -12,7 +12,7 @@ edition = "2021"
 clap = { version = "3.2.17", features = ["derive"] }
 indicatif = {version = "*", features = ["rayon"]}
 rayon = "1.5"
-ansi_term = "0.12"
+colored = "2.0.0"
 atomic-counter = "1.0.1"
 lazy_static = "1.4.0"
 wait-timeout = "0.2.0"
