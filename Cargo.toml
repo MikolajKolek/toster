@@ -1,7 +1,7 @@
 [package]
-name = "tester"
-description = "A simple tester for competitive programming exercises"
-repository = "https://github.com/MikolajKolek/tester"
+name = "toster"
+description = "A simple-as-toast tester for C++ solutions to competitive programming exercises"
+repository = "https://github.com/MikolajKolek/toster"
 license = "MIT"
 version = "0.1.0"
 edition = "2021"

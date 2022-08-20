@@ -624,7 +624,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "tester"
+name = "textwrap"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1141d4d61095b28419e22cb0bbf02755f5e54e0526f97f1e3d1d160e60885fb"
+
+[[package]]
+name = "toster"
 version = "0.1.0"
 dependencies = [
  "atomic-counter",
@@ -638,12 +644,6 @@ dependencies = [
  "terminal_size 0.2.1",
  "wait-timeout",
 ]
-
-[[package]]
-name = "textwrap"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1141d4d61095b28419e22cb0bbf02755f5e54e0526f97f1e3d1d160e60885fb"
 
 [[package]]
 name = "unicode-ident"

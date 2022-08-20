@@ -1,2 +1,2 @@
-# Tester
-A simple tester for C++ solutions to competitive programming exercises
+# Toster
+A simple-as-toast tester for C++ solutions to competitive programming exercises
