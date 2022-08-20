@@ -1,7 +1,7 @@
 use std::fs;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command};
 use std::time::{Duration, Instant};
 use tempfile::{TempDir};
 use wait_timeout::ChildExt;
@@ -16,22 +16,26 @@ pub fn compile_cpp(source_code_file: PathBuf, tempdir: &TempDir) -> Result<Strin
 	let compilation_result_file = File::create(&compilation_result_path).expect("Failed to create temporary file!");
 
 	let time_before_compilation = Instant::now();
-	if Command::new("g++")
+	let mut child = Command::new("g++")
 		.args(["-std=c++17", "-O3", "-static", source_code_file.to_str().expect("The provided filename is invalid!"), "-o", &executable_file])
 		.stderr(compilation_result_file)
-		.spawn().expect("g++ failed to start").wait_timeout(Duration::from_secs(10)).is_err() {
-		return Err("Compilation took too long".to_string());
+		.spawn().expect("g++ failed to start");
+	match child.wait_timeout(Duration::from_secs(10)).unwrap() {
+		Some(status) => {
+			if status.code().expect("G++ returned an invalid status code") != 0 {
+				let compilation_result = fs::read_to_string(&compilation_result_path).expect("Failed to read G++ output");
+				return Err(compilation_result);
+			}
+		}
+		None => {
+			child.kill().unwrap();
+			return Err("Compilation took too long".to_string());
+		}
 	}
 	let compilation_time = time_before_compilation.elapsed().as_secs_f64();
 
-	let compilation_result = fs::read_to_string(&compilation_result_path).expect("Failed to read G++ output");
-	return if !compilation_result.is_empty() {
-		Err(compilation_result)
-	}
-	else {
-		println!("{}", format!("Compilation completed in {:.2}s", compilation_time).green());
-		Ok(executable_file)
-	}
+	println!("{}", format!("Compilation completed in {:.2}s", compilation_time).green());
+	Ok(executable_file)
 }
 
 pub fn generate_output(executable_path: &String, input_file: File, output_file: File, timeout: &u64) -> f64 {
