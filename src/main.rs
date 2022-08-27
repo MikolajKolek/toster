@@ -24,8 +24,8 @@ use crate::testing_utils::{compile_cpp, generate_output, run_test};
 use crate::TestResult::{Correct, Error, Incorrect};
 
 lazy_static! {
-    static ref CORRECT: RelaxedCounter = RelaxedCounter::new(0);
-    static ref INCORRECT: RelaxedCounter = RelaxedCounter::new(0);
+    static ref SUCCESS_COUNT: RelaxedCounter = RelaxedCounter::new(0);
+    static ref FAIL_COUNT: RelaxedCounter = RelaxedCounter::new(0);
 }
 
 fn main() {
@@ -60,14 +60,12 @@ fn main() {
 	}
 
 	// Progress bar styling
-	let mut style: ProgressStyle = ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{correct} {incorrect}")
+	let style: ProgressStyle = ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{correct} {incorrect}")
 		.expect("Progress bar creation failed!")
 		.with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed!"))
-		.progress_chars("#>-");
-	if !args.generate {
-		style = style.with_key("correct", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", format!("{} correct", &CORRECT.get()).green()).expect("Displaying the progress bar failed!"))
-			.with_key("incorrect", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", format!("{} incorrect", &INCORRECT.get()).red()).expect("Displaying the progress bar failed!"));
-	}
+		.progress_chars("#>-")
+		.with_key("correct", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", format!("{} succeeded", &SUCCESS_COUNT.get()).green()).expect("Displaying the progress bar failed!"))
+		.with_key("incorrect", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", format!("{} failed", &FAIL_COUNT.get()).red()).expect("Displaying the progress bar failed!"));
 
 	// Running tests / generating output
 	let slowest_test = Arc::new(Mutex::new((-1 as f64, String::new())));
@@ -87,8 +85,10 @@ fn main() {
 			match generate_output(&executable, input_file, output_file, &args.timeout) {
 				Ok(time) => {
 					test_time = time;
+					SUCCESS_COUNT.inc();
 				}
 				Err((error, time)) => {
+					FAIL_COUNT.inc();
 					let clone = Arc::clone(&errors);
 					clone.lock().expect("Failed to acquire mutex!").push(Error {test_name: test_name.clone(), error});
 					test_time = time;
@@ -100,10 +100,10 @@ fn main() {
 			test_time = time;
 
 			if let Correct { .. } = result {
-				CORRECT.inc();
+				SUCCESS_COUNT.inc();
 			}
 			else {
-				INCORRECT.inc();
+				FAIL_COUNT.inc();
 				let clone = Arc::clone(&errors);
 				clone.lock().expect("Failed to acquire mutex!").push(result);
 			}
@@ -130,17 +130,19 @@ fn main() {
 	// Printing the output
 	match args.generate {
 		true => {
-			println!("Generation finished in {:.2}s (Slowest test: {} at {:.3}s)",
+			println!("Generation finished in {:.2}s with {} and {} (Slowest test: {} at {:.3}s)",
 			         testing_time,
+			         format!("{} successful generations", SUCCESS_COUNT.get()).green(),
+			         format!("{} unsuccessful generations", FAIL_COUNT.get()).red(),
 			         slowest_test_mutex.1,
 			         slowest_test_mutex.0
 			);
 		}
 		false => {
-			println!("Testing finished in {:.2}s with {} and {}: (Slowest test: {} at {:.3}s)",
+			println!("Testing finished in {:.2}s with {} and {} (Slowest test: {} at {:.3}s)",
 			         testing_time,
-			         format!("{} correct answers", CORRECT.get()).green(),
-			         format!("{} incorrect answers", INCORRECT.get()).red(),
+			         format!("{} correct answers", SUCCESS_COUNT.get()).green(),
+			         format!("{} incorrect answers", FAIL_COUNT.get()).red(),
 			         slowest_test_mutex.1,
 			         slowest_test_mutex.0
 			);
