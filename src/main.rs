@@ -83,10 +83,15 @@ fn main() {
 			let output_file_path = format!("{}/{}.out", &output_dir, test_name);
 			let output_file = File::create(Path::new(&output_file_path)).expect("Failed to create output file!");
 
-			test_time = generate_output(&executable, input_file, output_file, &args.timeout);
-			if test_time == args.timeout as f64 {
-				let clone = Arc::clone(&errors);
-				clone.lock().expect("Failed to acquire mutex!").push(Error {test_name: test_name.clone(), error_message: "Timed out".to_string()});
+			match generate_output(&executable, input_file, output_file, &args.timeout) {
+				Ok(time) => {
+					test_time = time;
+				}
+				Err((error, time)) => {
+					let clone = Arc::clone(&errors);
+					clone.lock().expect("Failed to acquire mutex!").push(Error {test_name: test_name.clone(), error});
+					test_time = time;
+				}
 			}
 		}
 		else {

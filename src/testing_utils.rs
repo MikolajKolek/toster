@@ -7,6 +7,9 @@ use tempfile::{TempDir};
 use wait_timeout::ChildExt;
 use colored::Colorize;
 use crate::{Correct, Error, Incorrect, TestResult};
+use crate::test_result::ExecutionError;
+use crate::test_result::ExecutionError::{NonZeroReturn, Terminated, TimedOut};
+use crate::TestResult::{NoOutputFile};
 
 pub fn compile_cpp(source_code_file: PathBuf, tempdir: &TempDir) -> Result<String, String> {
 	let source_code_folder = source_code_file.parent().expect("The source code is in an invalid folder!");
@@ -38,19 +41,29 @@ pub fn compile_cpp(source_code_file: PathBuf, tempdir: &TempDir) -> Result<Strin
 	Ok(executable_file)
 }
 
-pub fn generate_output(executable_path: &String, input_file: File, output_file: File, timeout: &u64) -> f64 {
+pub fn generate_output(executable_path: &String, input_file: File, output_file: File, timeout: &u64) -> Result<f64, (ExecutionError, f64)> {
 	let time_before_run = Instant::now();
 	let mut child = Command::new(format!("./{}", &executable_path))
 		.stdout(output_file)
 		.stdin(input_file)
 		.spawn().expect("Failed to run compiled file!");
 
-	return if child.wait_timeout(Duration::from_secs(*timeout)).unwrap() == None {
-		*timeout as f64
-	}
-	else {
-		time_before_run.elapsed().as_secs_f64()
-	}
+	return match child.wait_timeout(Duration::from_secs(*timeout)).unwrap() {
+		Some(status) => {
+			if status.code().is_none() {
+				return Err((Terminated, time_before_run.elapsed().as_secs_f64()));
+			}
+			if status.code().unwrap() != 0 {
+				return Err((NonZeroReturn(status.code().unwrap()), time_before_run.elapsed().as_secs_f64()));
+			}
+
+			Ok(time_before_run.elapsed().as_secs_f64())
+		}
+		None => {
+			child.kill().unwrap();
+			Err((TimedOut, *timeout as f64))
+		}
+	};
 }
 
 pub fn run_test(executable_path: &String,
@@ -63,15 +76,17 @@ pub fn run_test(executable_path: &String,
 
 	let correct_output_file_path = format!("{}/{}.out", &output_dir, &test_name);
 	if !Path::new(&correct_output_file_path).is_file() {
-		return (Error {test_name: test_name.clone(), error_message: "Output file does not exist".to_string()}, 0 as f64);
+		return (NoOutputFile {test_name: test_name.clone()}, 0 as f64);
 	}
 	let test_output_file_path = tempdir.path().join(format!("{}.out", test_name));
 	let test_output_file = File::create(&test_output_file_path).expect("Failed to create temporary file!");
 
-	let test_time = generate_output(executable_path, input_file, test_output_file, timeout);
-	if test_time == *timeout as f64 {
-		return (Error {test_name: test_name.clone(), error_message: "Timed out".to_string()}, *timeout as f64);
+	let test_time_result = generate_output(executable_path, input_file, test_output_file, timeout);
+	if test_time_result.is_err() {
+		let result = test_time_result.unwrap_err();
+		return (Error {test_name: test_name.clone(), error: result.0}, result.1);
 	}
+	let test_time = test_time_result.unwrap_or_default();
 
 	let test_output: String = fs::read_to_string(&test_output_file_path).expect("Failed to read temporary file!");
 	let correct_output = fs::read_to_string(Path::new(&correct_output_file_path)).expect("Failed to read output file!");
