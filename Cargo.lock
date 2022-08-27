@@ -253,6 +253,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "human-sort"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "140a09c9305e6d5e557e2ed7cbc68e05765a7d4213975b87cb04920689cc6219"
+
+[[package]]
 name = "indexmap"
 version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -637,6 +643,7 @@ dependencies = [
  "clap",
  "colored",
  "comfy-table",
+ "human-sort",
  "indicatif",
  "lazy_static",
  "rayon",

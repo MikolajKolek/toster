@@ -85,6 +85,15 @@ impl TestResult {
 
 		return result;
 	}
+
+	pub fn test_name(&self) -> String {
+		return match self {
+			TestResult::Correct { test_name } => {test_name.clone()}
+			TestResult::Incorrect { test_name, .. } => {test_name.clone()}
+			TestResult::Error { test_name, .. } => {test_name.clone()}
+			TestResult::NoOutputFile { test_name } => {test_name.clone()}
+		};
+	}
 }
 
 impl ExecutionError {

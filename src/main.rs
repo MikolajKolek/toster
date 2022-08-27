@@ -3,6 +3,7 @@ mod test_result;
 mod testing_utils;
 
 use std::{fs};
+use std::cmp::Ordering;
 use std::env::current_dir;
 use std::fmt::{Write as FmtWrite};
 use std::fs::{File, read_dir};
@@ -115,12 +116,18 @@ fn main() {
 		}
 	});
 
-	// Printing the output
 	let testing_time = time_before_testing.elapsed().as_secs_f64();
 	let slowest_test_clone = Arc::clone(&slowest_test);
 	let errors_clone = Arc::clone(&errors);
 	let slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");
-	let errors_mutex = errors_clone.lock().expect("Failed to acquire mutex!");
+	let mut errors_mutex = errors_clone.lock().expect("Failed to acquire mutex!");
+
+	// Sorting the errors by name
+	errors_mutex.sort_unstable_by(|a, b| -> Ordering {
+		return human_sort::compare(&a.test_name(), &b.test_name());
+	});
+
+	// Printing the output
 	match args.generate {
 		true => {
 			println!("Generation finished in {:.2}s (Slowest test: {} at {:.3}s)",
