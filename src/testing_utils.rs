@@ -51,7 +51,7 @@ pub fn generate_output(executable_path: &String, input_file: File, output_file: 
 	return match child.wait_timeout(Duration::from_secs(*timeout)).unwrap() {
 		Some(status) => {
 			if status.code().is_none() {
-				return Err((Terminated, time_before_run.elapsed().as_secs_f64()));
+				return Err((Terminated(status.to_string()), time_before_run.elapsed().as_secs_f64()));
 			}
 			if status.code().unwrap() != 0 {
 				return Err((NonZeroReturn(status.code().unwrap()), time_before_run.elapsed().as_secs_f64()));

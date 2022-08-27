@@ -25,7 +25,7 @@ pub enum TestResult {
 pub enum ExecutionError {
 	TimedOut,
 	NonZeroReturn(i32),
-	Terminated
+	Terminated(String)
 }
 
 impl TestResult {
@@ -96,8 +96,8 @@ impl ExecutionError {
 			ExecutionError::NonZeroReturn(code) => {
 				format!("Runtime error - the program returned a non-zero return code: {}", code)
 			}
-			ExecutionError::Terminated => {
-				"Runtime error - the process was terminated".to_string()
+			ExecutionError::Terminated(message) => {
+				format!("Runtime error - the process was terminated with the following error:\n{}", message)
 			}
 		}
 	}
