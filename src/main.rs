@@ -132,8 +132,10 @@ fn main() {
 		true => {
 			println!("Generation finished in {:.2}s with {} and {} (Slowest test: {} at {:.3}s)",
 			         testing_time,
-			         format!("{} successful generations", SUCCESS_COUNT.get()).green(),
-			         format!("{} unsuccessful generations", FAIL_COUNT.get()).red(),
+			         format!("{} successful generation{}", SUCCESS_COUNT.get(),
+			                 if SUCCESS_COUNT.get() != 1 { "s" } else { "" }).green(),
+			         format!("{} unsuccessful generation{}", FAIL_COUNT.get(),
+			                 if FAIL_COUNT.get() != 1 { "s" } else { "" }).red(),
 			         slowest_test_mutex.1,
 			         slowest_test_mutex.0
 			);
@@ -141,8 +143,10 @@ fn main() {
 		false => {
 			println!("Testing finished in {:.2}s with {} and {} (Slowest test: {} at {:.3}s)",
 			         testing_time,
-			         format!("{} correct answers", SUCCESS_COUNT.get()).green(),
-			         format!("{} incorrect answers", FAIL_COUNT.get()).red(),
+			         format!("{} correct answer{}", SUCCESS_COUNT.get(),
+			                 if SUCCESS_COUNT.get() != 1 { "s" } else { "" }).green(),
+			         format!("{} incorrect answer{}", FAIL_COUNT.get(),
+							 if FAIL_COUNT.get() != 1 { "s" } else { "" }).red(),
 			         slowest_test_mutex.1,
 			         slowest_test_mutex.0
 			);
