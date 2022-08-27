@@ -631,7 +631,7 @@ checksum = "b1141d4d61095b28419e22cb0bbf02755f5e54e0526f97f1e3d1d160e60885fb"
 
 [[package]]
 name = "toster"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "atomic-counter",
  "clap",
