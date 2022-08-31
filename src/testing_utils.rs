@@ -11,7 +11,7 @@ use crate::test_result::ExecutionError;
 use crate::test_result::ExecutionError::{NonZeroReturn, Terminated, TimedOut};
 use crate::TestResult::{NoOutputFile};
 
-pub fn compile_cpp(source_code_file: PathBuf, tempdir: &TempDir) -> Result<String, String> {
+pub fn compile_cpp(source_code_file: PathBuf, tempdir: &TempDir, compile_timeout: u64) -> Result<String, String> {
 	let source_code_folder = source_code_file.parent().expect("The source code is in an invalid folder!");
 	let executable_file_base = source_code_folder.join(source_code_file.file_stem().expect("The provided filename is invalid!"));
 	let executable_file = tempdir.path().join(format!("{}.o", executable_file_base.to_str().expect("The provided filename is invalid!"))).to_str().expect("The provided filename is invalid!").to_string();
@@ -23,7 +23,7 @@ pub fn compile_cpp(source_code_file: PathBuf, tempdir: &TempDir) -> Result<Strin
 		.args(["-std=c++17", "-O3", "-static", source_code_file.to_str().expect("The provided filename is invalid!"), "-o", &executable_file])
 		.stderr(compilation_result_file)
 		.spawn().expect("g++ failed to start");
-	match child.wait_timeout(Duration::from_secs(10)).unwrap() {
+	match child.wait_timeout(Duration::from_secs(compile_timeout)).unwrap() {
 		Some(status) => {
 			if status.code().expect("G++ returned an invalid status code") != 0 {
 				let compilation_result = fs::read_to_string(&compilation_result_path).expect("Failed to read G++ output");
@@ -32,7 +32,7 @@ pub fn compile_cpp(source_code_file: PathBuf, tempdir: &TempDir) -> Result<Strin
 		}
 		None => {
 			child.kill().unwrap();
-			return Err("Compilation took too long".to_string());
+			return Err("Compilation timed out".to_string());
 		}
 	}
 	let compilation_time = time_before_compilation.elapsed().as_secs_f64();

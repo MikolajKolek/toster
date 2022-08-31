@@ -50,7 +50,7 @@ fn main() {
 
 	// Compiling
 	let executable: String;
-	match compile_cpp(Path::new(&args.filename).to_path_buf(), &tempdir) {
+	match compile_cpp(Path::new(&args.filename).to_path_buf(), &tempdir, args.compile_timeout) {
 		Ok(result) => { executable = result }
 		Err(error) => {
 			println!("{}", "Compilation failed with the following errors:".red());

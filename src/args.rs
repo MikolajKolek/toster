@@ -24,6 +24,10 @@ pub struct Args {
     #[clap(short, long, value_parser, default_value = "5")]
     pub timeout: u64,
 
+    /// The number of seconds after which compilation times out if it doesn't finish
+    #[clap(long, value_parser, default_value = "10")]
+    pub compile_timeout: u64,
+
     /// Makes the tester generate output files in the output directory instead of comparing the program's output with the files in the output directory
     #[clap(short, long, action)]
     pub generate: bool,
