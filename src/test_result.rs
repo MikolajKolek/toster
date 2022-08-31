@@ -1,8 +1,4 @@
-use std::cmp::max;
 use colored::Colorize;
-use comfy_table::ContentArrangement::Dynamic;
-use comfy_table::{Attribute, Cell, Color, Table};
-use terminal_size::{Height, Width};
 
 pub enum TestResult {
 	Correct {
@@ -10,8 +6,7 @@ pub enum TestResult {
 	},
 	Incorrect {
 		test_name: String,
-		correct_answer: String,
-		incorrect_answer: String
+		diff: String
 	},
 	Error {
 		test_name: String,
@@ -37,48 +32,9 @@ impl TestResult {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
 				result.push_str(&format!("{}", "Timed out".red()));
 			}
-			TestResult::Incorrect {test_name, correct_answer, incorrect_answer} => {
+			TestResult::Incorrect {test_name, diff} => {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
-
-				let split_correct = correct_answer.split("\n").collect::<Vec<_>>();
-				let split_incorrect = incorrect_answer.split("\n").collect::<Vec<_>>();
-
-				let (Width(w), Height(_)) = terminal_size::terminal_size().unwrap_or((Width(40), Height(0)));
-
-				let mut table = Table::new();
-				table.set_content_arrangement(Dynamic).set_width(w).set_header(vec![
-					Cell::new("Line").add_attribute(Attribute::Bold),
-					Cell::new("Output file").add_attribute(Attribute::Bold).fg(Color::Green),
-					Cell::new("Your program's output").add_attribute(Attribute::Bold).fg(Color::Red)
-				]);
-
-				let mut row_count = 0;
-				for i in 0..max(split_correct.len(), split_incorrect.len()) {
-					let file_segment = if split_correct.len() > i { split_correct[i] } else { "" };
-					let out_segment = if split_incorrect.len() > i { split_incorrect[i] } else { "" };
-
-					if file_segment.split_whitespace().collect::<Vec<&str>>() != out_segment.split_whitespace().collect::<Vec<&str>>() {
-						table.add_row(vec![
-							Cell::new(i + 1),
-							Cell::new(file_segment).fg(Color::Green),
-							Cell::new(out_segment).fg(Color::Red)
-						]);
-
-						row_count += 1;
-					}
-
-					if row_count >= 99 {
-						table.add_row(vec![
-							Cell::new("..."),
-							Cell::new("..."),
-							Cell::new("...")
-						]);
-
-						break;
-					}
-				}
-
-				result.push_str(&table.to_string());
+				result.push_str(diff);
 			}
 			TestResult::NoOutputFile { test_name } => {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));

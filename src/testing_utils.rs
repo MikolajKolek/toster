@@ -1,3 +1,4 @@
+use std::cmp::max;
 use std::fs;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -6,6 +7,9 @@ use std::time::{Duration, Instant};
 use tempfile::{TempDir};
 use wait_timeout::ChildExt;
 use colored::Colorize;
+use comfy_table::ContentArrangement::Dynamic;
+use comfy_table::{Attribute, Cell, Color, Table};
+use terminal_size::{Height, Width};
 use crate::{Correct, Error, Incorrect, TestResult};
 use crate::test_result::ExecutionError;
 use crate::test_result::ExecutionError::{NonZeroReturn, Terminated, TimedOut};
@@ -92,8 +96,49 @@ pub fn run_test(executable_path: &String,
 	let test_output: String = fs::read_to_string(&test_output_file_path).expect("Failed to read temporary file!");
 	let correct_output = fs::read_to_string(Path::new(&correct_output_file_path)).expect("Failed to read output file!");
 	return if test_output.split_whitespace().collect::<Vec<&str>>() != correct_output.split_whitespace().collect::<Vec<&str>>() {
-		(Incorrect { test_name: test_name.clone(), correct_answer: correct_output, incorrect_answer: test_output }, test_time)
+		(Incorrect { test_name: test_name.clone(), diff: generate_diff(correct_output, test_output) }, test_time)
 	} else {
 		(Correct { test_name: test_name.clone() }, test_time)
 	}
+}
+
+fn generate_diff(correct_answer: String, incorrect_answer: String) -> String {
+	let correct_split = correct_answer.split("\n").collect::<Vec<_>>();
+	let incorrect_split = incorrect_answer.split("\n").collect::<Vec<_>>();
+
+	let (Width(w), Height(_)) = terminal_size::terminal_size().unwrap_or((Width(40), Height(0)));
+	let mut table = Table::new();
+	table.set_content_arrangement(Dynamic).set_width(w).set_header(vec![
+		Cell::new("Line").add_attribute(Attribute::Bold),
+		Cell::new("Output file").add_attribute(Attribute::Bold).fg(Color::Green),
+		Cell::new("Your program's output").add_attribute(Attribute::Bold).fg(Color::Red)
+	]);
+
+	let mut row_count = 0;
+	for i in 0..max(correct_split.len(), incorrect_split.len()) {
+		let file_segment = if correct_split.len() > i { correct_split[i] } else { "" };
+		let out_segment = if incorrect_split.len() > i { incorrect_split[i] } else { "" };
+
+		if file_segment.split_whitespace().collect::<Vec<&str>>() != out_segment.split_whitespace().collect::<Vec<&str>>() {
+			table.add_row(vec![
+				Cell::new(i + 1),
+				Cell::new(file_segment).fg(Color::Green),
+				Cell::new(out_segment).fg(Color::Red)
+			]);
+
+			row_count += 1;
+		}
+
+		if row_count >= 99 {
+			table.add_row(vec![
+				Cell::new("..."),
+				Cell::new("..."),
+				Cell::new("...")
+			]);
+
+			break;
+		}
+	}
+
+	return table.to_string();
 }
