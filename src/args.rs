@@ -8,9 +8,17 @@ pub struct Args {
     #[clap(short, long, value_parser, default_value = "in")]
     pub r#in: String,
 
+    /// Input file extension
+    #[clap(long, value_parser, default_value = ".in")]
+    pub in_ext: String,
+
     /// Output directory
     #[clap(short, long, value_parser, default_value = "out")]
     pub out: String,
+
+    /// Output file extension
+    #[clap(long, value_parser, default_value = ".out")]
+    pub out_ext: String,
 
     /// The number of seconds after which a test or generation times out if the program does not return
     #[clap(short, long, value_parser, default_value = "5")]

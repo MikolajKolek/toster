@@ -67,14 +67,15 @@ pub fn generate_output(executable_path: &String, input_file: File, output_file: 
 }
 
 pub fn run_test(executable_path: &String,
-            input_dir: &String,
+            input_file_path: &Path,
             output_dir: &String,
             test_name: &String,
+            out_extension: &String,
             tempdir: &TempDir,
             timeout: &u64) -> (TestResult, f64) {
-	let input_file = File::open(format!("{}/{}.in", &input_dir, &test_name)).expect("Failed to open input file!");
+	let input_file = File::open(input_file_path).expect("Failed to open input file!");
 
-	let correct_output_file_path = format!("{}/{}.out", &output_dir, &test_name);
+	let correct_output_file_path = format!("{}/{}{}", &output_dir, &test_name, &out_extension);
 	if !Path::new(&correct_output_file_path).is_file() {
 		return (NoOutputFile {test_name: test_name.clone()}, 0 as f64);
 	}

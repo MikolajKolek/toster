@@ -67,19 +67,37 @@ fn main() {
 		.with_key("correct", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", format!("{} succeeded", &SUCCESS_COUNT.get()).green()).expect("Displaying the progress bar failed!"))
 		.with_key("incorrect", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", format!("{} failed", &FAIL_COUNT.get()).red()).expect("Displaying the progress bar failed!"));
 
+	// Filtering out input files
+	let mut input_files = read_dir(&input_dir).expect("Cannot open input directory!").collect::<Vec<_>>();
+	input_files.retain(|input| {
+		let input_path = input.as_ref().expect("Failed to acquire reference!").path();
+		let extension = input_path.extension();
+
+		return match extension {
+			None => {false}
+			Some(ext) => { ".".to_owned() + &ext.to_str().unwrap_or("") == args.in_ext }
+		};
+	});
+
+	if input_files.is_empty() {
+		println!("{}", "There are no files in the input directory with the provided file extension".red());
+		return;
+	}
+
 	// Running tests / generating output
 	let slowest_test = Arc::new(Mutex::new((-1 as f64, String::new())));
 	let errors = Arc::new(Mutex::new(vec![]));
 	let time_before_testing = Instant::now();
-	read_dir(&input_dir).expect("Cannot open input directory!").collect::<Vec<_>>().par_iter().progress_with_style(style).for_each(|input| {
+	input_files.par_iter().progress_with_style(style).for_each(|input| {
 		let input_file_entry = input.as_ref().expect("Failed to acquire reference!");
-		let input_file_path = input_file_entry.path().to_string_lossy().to_string();
-		let test_name = input_file_entry.path().file_stem().expect(&*format!("The input file {} is invalid!", input_file_path)).to_str().expect(&*format!("The input file {} is invalid!", input_file_path)).to_string();
+		let input_file_path = input_file_entry.path();
+		let input_file_path_str = input_file_path.to_string_lossy().to_string();
+		let test_name = input_file_entry.path().file_stem().expect(&*format!("The input file {} is invalid!", input_file_path_str)).to_str().expect(&*format!("The input file {} is invalid!", input_file_path_str)).to_string();
 
 		let test_time: f64;
 		if args.generate {
-			let input_file = File::open(input_file_entry.path()).expect(&*format!("Could not open input file {}", input_file_path));
-			let output_file_path = format!("{}/{}.out", &output_dir, test_name);
+			let input_file = File::open(input_file_path).expect(&*format!("Could not open input file {}", input_file_path_str));
+			let output_file_path = format!("{}/{}{}", &output_dir, test_name, args.out_ext);
 			let output_file = File::create(Path::new(&output_file_path)).expect("Failed to create output file!");
 
 			match generate_output(&executable, input_file, output_file, &args.timeout) {
@@ -96,7 +114,7 @@ fn main() {
 			}
 		}
 		else {
-			let (result, time) = run_test(&executable, &input_dir, &output_dir, &test_name, &tempdir, &args.timeout);
+			let (result, time) = run_test(&executable, input_file_path.as_path(), &output_dir, &test_name, &args.out_ext, &tempdir, &args.timeout);
 			test_time = time;
 
 			if let Correct { .. } = result {
