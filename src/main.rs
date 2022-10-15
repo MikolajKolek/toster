@@ -2,11 +2,12 @@ mod args;
 mod test_result;
 mod testing_utils;
 
-use std::{fs};
+use std::{fs, panic, process};
 use std::cmp::Ordering;
 use std::env::current_dir;
 use std::fmt::{Write as FmtWrite};
 use std::fs::{File, read_dir};
+use std::panic::PanicInfo;
 use std::path::{Path};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant};
@@ -19,6 +20,7 @@ use tempfile::{tempdir};
 use args::Args;
 use clap::Parser;
 use colored::Colorize;
+use human_panic::{handle_dump, Metadata, print_msg, setup_panic};
 use crate::test_result::TestResult;
 use crate::testing_utils::{compile_cpp, generate_output, run_test};
 use crate::TestResult::{Correct, Error, Incorrect};
@@ -28,7 +30,30 @@ lazy_static! {
     static ref FAIL_COUNT: RelaxedCounter = RelaxedCounter::new(0);
 }
 
+// For whatever reason, the setup_panic!() macro doesn't seem to work, so I just made it a function
+fn setup_panic() {
+	match std::env::var("RUST_BACKTRACE") {
+		Err(_) => {
+			let meta = Metadata {
+				version: env!("CARGO_PKG_VERSION").into(),
+				name: env!("CARGO_PKG_NAME").into(),
+				authors: env!("CARGO_PKG_AUTHORS").replace(":", ", ").into(),
+				homepage: env!("CARGO_PKG_HOMEPAGE").into(),
+			};
+
+			panic::set_hook(Box::new(move |info: &PanicInfo| {
+				let file_path = handle_dump(&meta, info);
+				print_msg(file_path, &meta)
+					.expect("human-panic: printing error message to console failed");
+				process::exit(-1)
+			}));
+		}
+		Ok(_) => {}
+	}
+}
+
 fn main() {
+	setup_panic();
 	let args = Args::parse();
 	let workspace_dir = current_dir().expect("The current directory is invalid!").to_str().expect("The current directory is invalid!").to_string();
 	let input_dir: String = format!("{}/{}", &workspace_dir, args.r#in);
