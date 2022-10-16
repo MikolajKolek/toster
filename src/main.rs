@@ -20,7 +20,7 @@ use tempfile::{tempdir};
 use args::Args;
 use clap::Parser;
 use colored::Colorize;
-use human_panic::{handle_dump, Metadata, print_msg, setup_panic};
+use human_panic::{handle_dump, Metadata, print_msg};
 use crate::test_result::TestResult;
 use crate::testing_utils::{compile_cpp, generate_output, run_test};
 use crate::TestResult::{Correct, Error, Incorrect};
