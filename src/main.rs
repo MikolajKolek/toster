@@ -21,13 +21,17 @@ use args::Args;
 use clap::Parser;
 use colored::Colorize;
 use human_panic::{handle_dump, Metadata, print_msg};
-use crate::test_result::TestResult;
+use crate::test_result::{ExecutionError, TestResult};
 use crate::testing_utils::{compile_cpp, generate_output, run_test};
-use crate::TestResult::{Correct, Error, Incorrect};
+use crate::TestResult::{Correct, Error, Incorrect, NoOutputFile};
 
 lazy_static! {
     static ref SUCCESS_COUNT: RelaxedCounter = RelaxedCounter::new(0);
-    static ref FAIL_COUNT: RelaxedCounter = RelaxedCounter::new(0);
+    static ref TIMED_OUT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
+    static ref INCORRECT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
+    static ref NON_ZER_RETURN_COUNT: RelaxedCounter = RelaxedCounter::new(0);
+    static ref TERMINATED_COUNT: RelaxedCounter = RelaxedCounter::new(0);
+    static ref NO_OUTPUT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
 }
 
 // For whatever reason, the setup_panic!() macro doesn't seem to work, so I just made it a function
@@ -50,6 +54,21 @@ fn setup_panic() {
 		}
 		Ok(_) => {}
 	}
+}
+
+fn format_error_counts() -> String {
+	[
+		(TIMED_OUT_COUNT.get(), "timed out"),
+		(INCORRECT_COUNT.get(), "wrong answer"),
+		(NON_ZER_RETURN_COUNT.get(), "non-zero return code"),
+		(TERMINATED_COUNT.get(), "terminated with error"),
+		(NO_OUTPUT_COUNT.get(), "no output file"),
+	]
+		.into_iter()
+		.filter	(|(count, _)| count > &0)
+		.map(|(count, label)| format!("{} {}", count, label.to_string()))
+		.collect::<Vec<String>>()
+		.join(", ")
 }
 
 fn main() {
@@ -90,7 +109,9 @@ fn main() {
 		.with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed!"))
 		.progress_chars("#>-")
 		.with_key("correct", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", format!("{} succeeded", &SUCCESS_COUNT.get()).green()).expect("Displaying the progress bar failed!"))
-		.with_key("incorrect", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", format!("{} failed", &FAIL_COUNT.get()).red()).expect("Displaying the progress bar failed!"));
+		.with_key("incorrect", |_state: &ProgressState, w: &mut dyn FmtWrite| {
+			write!(w, "{}", format_error_counts().red()).expect("Displaying the progress bar failed!")
+		});
 
 	// Filtering out input files
 	let mut input_files = read_dir(&input_dir).expect("Cannot open input directory!").collect::<Vec<_>>();
@@ -131,7 +152,11 @@ fn main() {
 					SUCCESS_COUNT.inc();
 				}
 				Err((error, time)) => {
-					FAIL_COUNT.inc();
+					match error {
+						ExecutionError::TimedOut => { TIMED_OUT_COUNT.inc();}
+						ExecutionError::NonZeroReturn(_) => { NON_ZER_RETURN_COUNT.inc(); }
+						ExecutionError::Terminated(_) => { TERMINATED_COUNT.inc(); }
+					}
 					let clone = Arc::clone(&errors);
 					clone.lock().expect("Failed to acquire mutex!").push(Error {test_name: test_name.clone(), error});
 					test_time = time;
@@ -142,11 +167,16 @@ fn main() {
 			let (result, time) = run_test(&executable, input_file_path.as_path(), &output_dir, &test_name, &args.out_ext, &tempdir, &args.timeout);
 			test_time = time;
 
-			if let Correct { .. } = result {
-				SUCCESS_COUNT.inc();
+			match result {
+				Correct { .. } => {}
+				Incorrect { .. } => { INCORRECT_COUNT.inc(); }
+				Error { error: ExecutionError::NonZeroReturn(_), .. } => { NON_ZER_RETURN_COUNT.inc(); }
+				Error { error: ExecutionError::TimedOut, .. } => { TIMED_OUT_COUNT.inc(); }
+				Error { error: ExecutionError::Terminated(_), .. } => { TERMINATED_COUNT.inc(); }
+				NoOutputFile { .. } => { NO_OUTPUT_COUNT.inc(); }
 			}
-			else {
-				FAIL_COUNT.inc();
+
+			if !result.is_correct() {
 				let clone = Arc::clone(&errors);
 				clone.lock().expect("Failed to acquire mutex!").push(result);
 			}
@@ -170,15 +200,17 @@ fn main() {
 		return human_sort::compare(&a.test_name(), &b.test_name());
 	});
 
+	let fail_count = TIMED_OUT_COUNT.get() + INCORRECT_COUNT.get() + NON_ZER_RETURN_COUNT.get() + TERMINATED_COUNT.get() + NO_OUTPUT_COUNT.get();
 	// Printing the output
+	// TODO: Show all failure types separately
 	match args.generate {
 		true => {
 			println!("Generation finished in {:.2}s with {} and {} (Slowest test: {} at {:.3}s)",
 			         testing_time,
 			         format!("{} successful generation{}", SUCCESS_COUNT.get(),
 			                 if SUCCESS_COUNT.get() != 1 { "s" } else { "" }).green(),
-			         format!("{} unsuccessful generation{}", FAIL_COUNT.get(),
-			                 if FAIL_COUNT.get() != 1 { "s" } else { "" }).red(),
+			         format!("{} unsuccessful generation{}", fail_count,
+			                 if fail_count != 1 { "s" } else { "" }).red(),
 			         slowest_test_mutex.1,
 			         slowest_test_mutex.0
 			);
@@ -188,8 +220,8 @@ fn main() {
 			         testing_time,
 			         format!("{} correct answer{}", SUCCESS_COUNT.get(),
 			                 if SUCCESS_COUNT.get() != 1 { "s" } else { "" }).green(),
-			         format!("{} incorrect answer{}", FAIL_COUNT.get(),
-							 if FAIL_COUNT.get() != 1 { "s" } else { "" }).red(),
+			         format!("{} incorrect answer{}", fail_count,
+							 if fail_count != 1 { "s" } else { "" }).red(),
 			         slowest_test_mutex.1,
 			         slowest_test_mutex.0
 			);
