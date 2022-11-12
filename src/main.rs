@@ -168,7 +168,7 @@ fn main() {
 			test_time = time;
 
 			match result {
-				Correct { .. } => {}
+				Correct { .. } => { SUCCESS_COUNT.inc(); }
 				Incorrect { .. } => { INCORRECT_COUNT.inc(); }
 				Error { error: ExecutionError::NonZeroReturn(_), .. } => { NON_ZER_RETURN_COUNT.inc(); }
 				Error { error: ExecutionError::TimedOut, .. } => { TIMED_OUT_COUNT.inc(); }
