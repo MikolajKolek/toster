@@ -57,6 +57,13 @@ impl TestResult {
 			TestResult::NoOutputFile { test_name } => {test_name.clone()}
 		};
 	}
+
+	pub fn is_correct(&self) -> bool {
+		match self {
+			TestResult::Correct { .. } => true,
+			_ => false,
+		}
+	}
 }
 
 impl ExecutionError {
