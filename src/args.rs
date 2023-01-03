@@ -20,6 +20,10 @@ pub struct Args {
     #[clap(long, value_parser, default_value = ".out")]
     pub out_ext: String,
 
+    /// The input and output directory (sets both -i and -o at once)
+    #[clap(long, value_parser)]
+    pub io: Option<String>,
+
     /// The number of seconds after which a test or generation times out if the program does not return
     #[clap(short, long, value_parser, default_value = "5")]
     pub timeout: u64,
