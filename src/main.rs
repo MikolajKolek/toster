@@ -75,9 +75,9 @@ fn main() {
 	setup_panic();
 	let args = Args::parse();
 	let workspace_dir = current_dir().expect("The current directory is invalid!").to_str().expect("The current directory is invalid!").to_string();
-	let input_dir: String = format!("{}/{}", &workspace_dir, args.r#in);
-	let output_dir: String = format!("{}/{}", &workspace_dir, args.out);
 	let tempdir = tempdir().expect("Failed to create temporary directory!");
+	let input_dir: String = args.io.clone().unwrap_or(format!("{}/{}", &workspace_dir, args.r#in));
+	let output_dir: String = args.io.clone().unwrap_or(format!("{}/{}", &workspace_dir, args.out));
 
 	// Making sure that the input and output directories as well as the source code file exist
 	if !Path::new(&output_dir).is_dir() {
