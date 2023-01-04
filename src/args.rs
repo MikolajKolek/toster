@@ -32,6 +32,10 @@ pub struct Args {
     #[clap(long, value_parser, default_value = "10")]
     pub compile_timeout: u64,
 
+    /// The command used to compile the file. <IN> gets replaced with the path to the source code file, <OUT> is the executable output location.
+    #[clap(short, long, value_parser, default_value = "g++ -std=c++17 -O3 -static <IN> -o <OUT>")]
+    pub compile_command: String,
+
     /// Makes the tester generate output files in the output directory instead of comparing the program's output with the files in the output directory
     #[clap(short, long, action)]
     pub generate: bool,

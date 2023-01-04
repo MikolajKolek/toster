@@ -16,22 +16,27 @@ use crate::test_result::ExecutionError;
 use crate::test_result::ExecutionError::{NonZeroReturn, Terminated, TimedOut};
 use crate::TestResult::{NoOutputFile};
 
-pub fn compile_cpp(source_code_file: PathBuf, tempdir: &TempDir, compile_timeout: u64) -> Result<String, String> {
+pub fn compile_cpp(source_code_file: PathBuf, tempdir: &TempDir, compile_timeout: u64, compile_command: &String) -> Result<String, String> {
 	let source_code_folder = source_code_file.parent().expect("The source code is in an invalid folder!");
 	let executable_file_base = source_code_folder.join(source_code_file.file_stem().expect("The provided filename is invalid!"));
 	let executable_file = tempdir.path().join(format!("{}.o", executable_file_base.to_str().expect("The provided filename is invalid!"))).to_str().expect("The provided filename is invalid!").to_string();
 	let compilation_result_path = tempdir.path().join(format!("{}.out", executable_file_base.to_str().expect("The provided filename is invalid!")));
 	let compilation_result_file = File::create(&compilation_result_path).expect("Failed to create temporary file!");
 
+	let cmd = compile_command
+		.replace("<IN>", source_code_file.to_str().expect("The provided filename is invalid!"))
+		.replace("<OUT>", &executable_file);
+	let mut split_cmd = cmd.split(" ");
+
 	let time_before_compilation = Instant::now();
-	let command = Command::new("g++")
-		.args(["-std=c++17", "-O3", "-static", source_code_file.to_str().expect("The provided filename is invalid!"), "-o", &executable_file])
+	let command = Command::new(&split_cmd.nth(0).expect("The compile command is invalid!"))
+		.args(split_cmd.collect::<Vec<&str>>())
 		.stderr(compilation_result_file)
 		.spawn();
 	
 	if command.as_ref().is_err() {
 		return if matches!(command.as_ref().unwrap_err().kind(), NotFound) {
-			Err("The G++ compiler was not found!".to_string())
+			Err("The compiler was not found!".to_string())
 		} else {
 			Err(command.unwrap_err().to_string())
 		}
@@ -40,8 +45,8 @@ pub fn compile_cpp(source_code_file: PathBuf, tempdir: &TempDir, compile_timeout
 	let mut child = command.unwrap();
 	match child.wait_timeout(Duration::from_secs(compile_timeout)).unwrap() {
 		Some(status) => {
-			if status.code().expect("G++ returned an invalid status code") != 0 {
-				let compilation_result = fs::read_to_string(&compilation_result_path).expect("Failed to read G++ output");
+			if status.code().expect("The compiler returned an invalid status code") != 0 {
+				let compilation_result = fs::read_to_string(&compilation_result_path).expect("Failed to read compiler output");
 				return Err(compilation_result);
 			}
 		}

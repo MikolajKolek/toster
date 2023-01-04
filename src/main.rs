@@ -93,6 +93,19 @@ fn main() {
 	if !Path::new(&input_dir).is_dir() { println!("{}", "The input directory does not exist".red()); return; }
 	if !Path::new(&args.filename).is_file() { println!("{}", "The provided file does not exist".red()); return; }
 
+	if !args.compile_command.contains("<IN>") || !args.compile_command.contains("<OUT>") {
+		println!("{}", "The compile command is invalid:".red());
+
+		if !args.compile_command.contains("<IN>") {
+			println!("{}", "- The <IN> argument is missing (read \"toster -h\" for more info)".red());
+		}
+		if !args.compile_command.contains("<OUT>") {
+			println!("{}", "- The <OUT> argument is missing (read \"toster -h\" for more info)".red());
+		}
+
+		return;
+	}
+
 	// Compiling
 	let executable: String;
 	if is_executable(&args.filename) {
@@ -100,7 +113,7 @@ fn main() {
 		fs::copy(&args.filename, &executable).expect("The provided filename is invalid!");
 	}
 	else {
-		match compile_cpp(Path::new(&args.filename).to_path_buf(), &tempdir, args.compile_timeout) {
+		match compile_cpp(Path::new(&args.filename).to_path_buf(), &tempdir, args.compile_timeout, &args.compile_command) {
 			Ok(result) => { executable = result }
 			Err(error) => {
 				println!("{}", "Compilation failed with the following errors:".red());
