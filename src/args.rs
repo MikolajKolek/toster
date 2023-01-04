@@ -36,7 +36,7 @@ pub struct Args {
     #[clap(short, long, action)]
     pub generate: bool,
 
-    /// The name of the file containing the source code
+    /// The name of the file containing the source code or the executable you want to test
     #[clap(value_parser)]
     pub filename: String
 }

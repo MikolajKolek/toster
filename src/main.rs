@@ -21,6 +21,7 @@ use args::Args;
 use clap::Parser;
 use colored::Colorize;
 use human_panic::{handle_dump, Metadata, print_msg};
+use is_executable::is_executable;
 use crate::test_result::{ExecutionError, TestResult};
 use crate::testing_utils::{compile_cpp, generate_output, run_test};
 use crate::TestResult::{Correct, Error, Incorrect, NoOutputFile};
@@ -90,16 +91,22 @@ fn main() {
 		}
 	}
 	if !Path::new(&input_dir).is_dir() { println!("{}", "The input directory does not exist".red()); return; }
-	if !Path::new(&args.filename).is_file() { println!("{}", "The source code file does not exist".red()); return; }
+	if !Path::new(&args.filename).is_file() { println!("{}", "The provided file does not exist".red()); return; }
 
 	// Compiling
 	let executable: String;
-	match compile_cpp(Path::new(&args.filename).to_path_buf(), &tempdir, args.compile_timeout) {
-		Ok(result) => { executable = result }
-		Err(error) => {
-			println!("{}", "Compilation failed with the following errors:".red());
-			println!("{}", error);
-			return;
+	if is_executable(&args.filename) {
+		executable = tempdir.path().join(format!("{}.o", Path::new(&args.filename).file_name().expect("The provided filename is invalid!").to_str().expect("The provided filename is invalid!"))).to_str().expect("The provided filename is invalid!").to_string();
+		fs::copy(&args.filename, &executable).expect("The provided filename is invalid!");
+	}
+	else {
+		match compile_cpp(Path::new(&args.filename).to_path_buf(), &tempdir, args.compile_timeout) {
+			Ok(result) => { executable = result }
+			Err(error) => {
+				println!("{}", "Compilation failed with the following errors:".red());
+				println!("{}", error);
+				return;
+			}
 		}
 	}
 
