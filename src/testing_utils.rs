@@ -61,7 +61,7 @@ pub fn generate_output(executable_path: &String, input_file: File, output_file: 
 	let mut child = Command::new(executable_path)
 		.stdout(output_file)
 		.stdin(input_file)
-		.spawn().expect("Failed to run compiled file!");
+		.spawn().expect("Failed to run file!");
 
 	return match child.wait_timeout(Duration::from_secs(*timeout)).unwrap() {
 		Some(status) => {
