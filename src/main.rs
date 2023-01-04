@@ -96,7 +96,8 @@ fn main() {
 	// Compiling
 	let executable: String;
 	if is_executable(&args.filename) {
-		executable = args.filename.clone();
+		executable = tempdir.path().join(format!("{}.o", Path::new(&args.filename).file_name().expect("The provided filename is invalid!").to_str().expect("The provided filename is invalid!"))).to_str().expect("The provided filename is invalid!").to_string();
+		fs::copy(&args.filename, &executable).expect("The provided filename is invalid!");
 	}
 	else {
 		match compile_cpp(Path::new(&args.filename).to_path_buf(), &tempdir, args.compile_timeout) {
