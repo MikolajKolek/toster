@@ -1,8 +1,7 @@
 use clap::Parser;
 
-/// A simple-as-toast tester for C++ solutions to competitive programming exercises
 #[derive(Parser, Debug)]
-#[clap(name = "Toster", version, about, long_about = None)]
+#[command(name = "Toster", version, about = "A simple-as-toast tester for C++ solutions to competitive programming exercises\nPress Ctrl+C during testing to stop before it finishes and see current results", long_about = None)]
 pub struct Args {
     /// Input directory
     #[clap(short, long, value_parser, default_value = "in")]
