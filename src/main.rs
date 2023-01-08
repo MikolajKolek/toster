@@ -2,7 +2,7 @@ mod args;
 mod test_result;
 mod testing_utils;
 
-use std::{fs, panic, process};
+use std::{fs, panic, process, thread};
 use std::cmp::Ordering;
 use std::env::current_dir;
 use std::fmt::{Write as FmtWrite};
@@ -11,7 +11,7 @@ use std::panic::PanicInfo;
 use std::path::{Path};
 use std::sync::{Arc, atomic, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
-use std::time::{Instant};
+use std::time::{Duration, Instant};
 use atomic_counter::{AtomicCounter, RelaxedCounter};
 use indicatif::{ParallelProgressIterator, ProgressState, ProgressStyle};
 use lazy_static::lazy_static;
@@ -234,7 +234,7 @@ fn main() {
 		let input_file_path_str = input_file_path.to_string_lossy().to_string();
 		let test_name = input_file_entry.path().file_stem().expect(&*format!("The input file {} is invalid!", input_file_path_str)).to_str().expect(&*format!("The input file {} is invalid!", input_file_path_str)).to_string();
 
-		let mut test_time: f64 = f64::INFINITY;
+		let mut test_time: f64 = f64::MAX;
 		if args.generate {
 			let input_file = File::open(input_file_path).expect(&*format!("Could not open input file {}", input_file_path_str));
 			let output_file_path = format!("{}/{}{}", &output_dir, test_name, args.out_ext);
@@ -259,6 +259,9 @@ fn main() {
 					}
 				}
 			}
+			else {
+				thread::sleep(Duration::from_secs(u64::MAX));
+			}
 		}
 		else {
 			let (result, time) = run_test(&executable, input_file_path.as_path(), &output_dir, &test_name, &args.out_ext, &tempdir, &args.timeout);
@@ -279,6 +282,9 @@ fn main() {
 					clone.lock().expect("Failed to acquire mutex!").push(result);
 				}
 			}
+			else {
+				thread::sleep(Duration::from_secs(u64::MAX));
+			}
 		}
 
 		if !RECEIVED_CTRL_C.load(atomic::Ordering::Acquire) {
@@ -287,6 +293,9 @@ fn main() {
 			if test_time > slowest_test_mutex.0 {
 				*slowest_test_mutex = (test_time, test_name.clone());
 			}
+		}
+		else {
+			thread::sleep(Duration::from_secs(u64::MAX));
 		}
 	});
 
