@@ -203,7 +203,7 @@ fn main() {
 		.expect("Progress bar creation failed!")
 		.with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed!"))
 		.progress_chars("#>-")
-		.with_key("correct", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", format!("{} {}", &SUCCESS_COUNT.get(), if GENERATE.load(atomic::Ordering::Acquire) {"successful"} else {"correct"}).green()).expect("Displaying the progress bar failed!"))
+		.with_key("correct", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", format!("{} {}", &SUCCESS_COUNT.get(), if GENERATE.load(atomic::Ordering::Acquire) {"successful"} else {if SUCCESS_COUNT.get() != 1 {"correct answers"} else {"correct answer"}}).green()).expect("Displaying the progress bar failed!"))
 		.with_key("incorrect", |_state: &ProgressState, w: &mut dyn FmtWrite| {
 			write!(w, "{}", format_error_counts()).expect("Displaying the progress bar failed!")
 		});
