@@ -199,14 +199,19 @@ fn main() {
 	}
 
 	// Progress bar styling
-	let style: ProgressStyle = ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{correct} {incorrect}")
+	let style: ProgressStyle = ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{correct} {incorrect} {ctrlc}")
 		.expect("Progress bar creation failed!")
 		.with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed!"))
 		.progress_chars("#>-")
-		.with_key("correct", |_state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{}", format!("{} {}", &SUCCESS_COUNT.get(), if GENERATE.load(atomic::Ordering::Acquire) {"successful"} else {if SUCCESS_COUNT.get() != 1 {"correct answers"} else {"correct answer"}}).green()).expect("Displaying the progress bar failed!"))
-		.with_key("incorrect", |_state: &ProgressState, w: &mut dyn FmtWrite| {
+		.with_key("correct", |_state: &ProgressState, w: &mut dyn FmtWrite|
+			write!(w, "{}", format!("{} {}", &SUCCESS_COUNT.get(), if GENERATE.load(atomic::Ordering::Acquire) {"successful"} else {if SUCCESS_COUNT.get() != 1 {"correct answers"} else {"correct answer"}}).green()).expect("Displaying the progress bar failed!")
+		)
+		.with_key("incorrect", |_state: &ProgressState, w: &mut dyn FmtWrite|
 			write!(w, "{}", format_error_counts()).expect("Displaying the progress bar failed!")
-		});
+		)
+		.with_key("ctrlc", |_state: &ProgressState, w: &mut dyn FmtWrite|
+			write!(w, "{}", "(Press Ctrl+C to stop testing and print current results)".bright_black()).expect("Displaying the progress bar Ctrl+C message failed!")
+		);
 
 	// Filtering out input files
 	let mut input_files = read_dir(&input_dir).expect("Cannot open input directory!").collect::<Vec<_>>();
