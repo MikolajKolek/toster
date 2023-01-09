@@ -82,7 +82,7 @@ fn format_error_counts() -> String {
 		.join(", ")
 }
 
-fn print_output(print_newline: bool) {
+fn print_output(stopped_early: bool) {
 	let slowest_test_clone = Arc::clone(&SLOWEST_TEST);
 	let errors_clone = Arc::clone(&ERRORS);
 	let slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");
@@ -96,14 +96,15 @@ fn print_output(print_newline: bool) {
 	let error_text = format!("{}{}", if !error_counts.is_empty() {", "} else {""}, error_counts);
 	let not_finished_text = if not_tested_count > 0 {format!(", {}", (not_tested_count.to_string() + " not finished").yellow())} else {"".to_string()};
 
-	if print_newline {
+	if stopped_early {
 		println!();
 	}
 
 	// Printing the output
 	match GENERATE.load(atomic::Ordering::Acquire) {
 		true => {
-			println!("Generation finished in {:.2}s (Slowest test: {} at {:.3}s)\nResults: {}{}{}",
+			println!("Generation {} {:.2}s (Slowest test: {} at {:.3}s)\nResults: {}{}{}",
+			         if stopped_early {"stopped after"} else {"finished in"},
 			         testing_time,
 			         slowest_test_mutex.1,
 			         slowest_test_mutex.0,
@@ -113,9 +114,10 @@ fn print_output(print_newline: bool) {
 			);
 		}
 		false => {
-			println!("Testing finished in {:.2}s (Slowest test: {} at {:.3}s)\nResults: {}{}{}",
+			println!("Testing {} {:.2}s (Slowest test: {} at {:.3}s)\nResults: {}{}{}",
+			         if stopped_early {"stopped after"} else {"finished in"},
 			         testing_time,
-					 slowest_test_mutex.1,
+			         slowest_test_mutex.1,
 			         slowest_test_mutex.0,
 			         format!("{} correct", SUCCESS_COUNT.get()).green(),
 			         error_text,
