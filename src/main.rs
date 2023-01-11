@@ -4,7 +4,6 @@ mod testing_utils;
 
 use std::{fs, panic, process, thread};
 use std::cmp::Ordering;
-use std::env::current_dir;
 use std::fmt::{Write as FmtWrite};
 use std::fs::{File, read_dir};
 use std::panic::PanicInfo;
@@ -152,10 +151,9 @@ fn main() {
 
 	let args = Args::parse();
 	GENERATE.store(args.generate, atomic::Ordering::Release);
-	let workspace_dir = current_dir().expect("The current directory is invalid!").to_str().expect("The current directory is invalid!").to_string();
 	let tempdir = tempdir().expect("Failed to create temporary directory!");
-	let input_dir: String = args.io.clone().unwrap_or(format!("{}/{}", &workspace_dir, args.r#in));
-	let output_dir: String = args.io.clone().unwrap_or(format!("{}/{}", &workspace_dir, args.out));
+	let input_dir: String = args.io.clone().unwrap_or(args.r#in);
+	let output_dir: String = args.io.clone().unwrap_or(args.out);
 
 	// Making sure that the input and output directories as well as the source code file exist
 	if !Path::new(&output_dir).is_dir() {
