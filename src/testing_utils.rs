@@ -18,9 +18,9 @@ use crate::test_result::ExecutionError::{NonZeroReturn, Terminated, TimedOut};
 use crate::TestResult::{NoOutputFile};
 
 pub fn compile_cpp(source_code_file: PathBuf, tempdir: &TempDir, compile_timeout: u64, compile_command: &String) -> Result<String, String> {
-	let source_code_folder = source_code_file.parent().expect("The source code is in an invalid folder!");
-	let executable_file_base = source_code_folder.join(source_code_file.file_stem().expect("The provided filename is invalid!"));
+	let executable_file_base = source_code_file.file_stem().expect("The provided filename is invalid!");
 	let executable_file = tempdir.path().join(format!("{}.o", executable_file_base.to_str().expect("The provided filename is invalid!"))).to_str().expect("The provided filename is invalid!").to_string();
+
 	let compilation_result_path = tempdir.path().join(format!("{}.out", executable_file_base.to_str().expect("The provided filename is invalid!")));
 	let compilation_result_file = File::create(&compilation_result_path).expect("Failed to create temporary file!");
 
