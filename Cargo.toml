@@ -3,7 +3,7 @@ name = "toster"
 description = "A simple-as-toast tester for C++ solutions to competitive programming exercises"
 repository = "https://github.com/MikolajKolek/toster"
 license = "MIT"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

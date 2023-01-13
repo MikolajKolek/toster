@@ -833,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "toster"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "atomic-counter",
  "clap",
