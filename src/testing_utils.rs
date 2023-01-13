@@ -1,7 +1,8 @@
 use std::cmp::max;
-use std::fs;
+use std::{fs, thread};
 use std::fs::File;
 use std::io::ErrorKind::NotFound;
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command};
 use std::time::{Duration, Instant};
@@ -71,6 +72,10 @@ pub fn generate_output(executable_path: &String, input_file: File, output_file: 
 	return match child.wait_timeout(Duration::from_secs(*timeout)).unwrap() {
 		Some(status) => {
 			if status.code().is_none() {
+				if cfg!(unix) && status.signal().expect("The program returned an invalid status code!") == 2 {
+					thread::sleep(Duration::from_secs(u64::MAX));
+				}
+
 				return Err((Terminated(status.to_string()), time_before_run.elapsed().as_secs_f64()));
 			}
 			if status.code().unwrap() != 0 {
