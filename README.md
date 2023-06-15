@@ -40,3 +40,6 @@ Options:
 
 # License
 Toster is licensed under the [MIT Licence](https://github.com/MikolajKolek/toster/blob/master/LICENSE)
+
+# Dependencies
+This project uses [sio2jail](https://github.com/sio2project/sio2jail), a project available under the MIT licence
