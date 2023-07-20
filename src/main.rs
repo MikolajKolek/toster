@@ -124,7 +124,7 @@ fn print_output(stopped_early: bool) {
 			         testing_time,
 			         slowest_test_mutex.1,
 			         slowest_test_mutex.0,
-					 if most_memory_mutex.0 != -1 { format!(", most memory used: {} at {}KB", most_memory_mutex.1, most_memory_mutex.0) } else { String::new() },
+					 if most_memory_mutex.0 != -1 { format!(", most memory used: {} at {}KiB", most_memory_mutex.1, most_memory_mutex.0) } else { String::new() },
 			         format!("{} correct", SUCCESS_COUNT.get()).green(),
 			         error_text,
 			         not_finished_text
@@ -163,7 +163,7 @@ fn main() {
 	let output_dir: String = args.io.clone().unwrap_or(args.out);
 
 	let mut sio2jail = if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") { args.sio2jail } else { false };
-	let memory_limit = if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") { args.memory_limit.unwrap_or(0) } else { 0 };
+	let mut memory_limit = if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") { args.memory_limit.unwrap_or(0) } else { 0 };
 
 	if sio2jail && args.generate {
 		println!("{}", "You can't have the --generate and --sio2jail flags on at the same time.".red());
@@ -171,6 +171,9 @@ fn main() {
 	}
 	if memory_limit != 0 && !sio2jail {
 		sio2jail = true;
+	}
+	if sio2jail && memory_limit == 0 {
+		memory_limit = 1048576;
 	}
 	if sio2jail && get_sio2jail() == String::new() {
 		return;

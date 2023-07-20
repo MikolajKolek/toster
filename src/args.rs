@@ -35,7 +35,7 @@ pub struct Args {
 	#[clap(short, long, value_parser, default_value = "g++ -std=c++17 -O3 -static <IN> -o <OUT>")]
 	pub compile_command: String,
 
-	/// Makes toster use sio2jail for measuring program runtime and memory use more accurately. WARNING: enabling this flag can significantly slow down testing
+	/// Makes toster use sio2jail for measuring program runtime and memory use more accurately. By default limits memory use to 1 GiB. WARNING: enabling this flag can significantly slow down testing
 	#[cfg(target_os = "linux")]
 	#[cfg(target_arch = "x86_64")]
 	#[clap(short, long, action)]

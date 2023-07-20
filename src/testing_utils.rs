@@ -166,7 +166,11 @@ pub fn generate_output_sio2jail(
 	let command_result = child.wait_timeout(Duration::from_secs(*timeout)).unwrap();
 	let error_output= fs::read_to_string(error_file_path).expect("Couldn't read sio2jail error output");
 	if !error_output.is_empty() {
-		return (ExecutionResult { time_seconds: 0 as f64, memory_kilobytes: Some(0) }, Err(Sio2jailError(error_output)))
+		return if error_output == "terminate called after throwing an instance of 'std::bad_alloc'\n  what():  std::bad_alloc\n" {
+			(ExecutionResult { time_seconds: 0 as f64, memory_kilobytes: Some(*memory_limit as i64) }, Err(RanOutOfMemory))
+		} else {
+			(ExecutionResult { time_seconds: 0 as f64, memory_kilobytes: Some(0) }, Err(Sio2jailError(error_output)))
+		}
 	}
 
 	let sio2jail_output = fs::read_to_string(sio2jail_output_file_path).expect("Couldn't read temporary sio2jail file");

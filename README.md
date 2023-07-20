@@ -31,7 +31,7 @@ Options:
   -c, --compile-command <COMPILE_COMMAND>
           The command used to compile the file. <IN> gets replaced with the path to the source code file, <OUT> is the executable output location [default: "g++ -std=c++17 -O3 -static <IN> -o <OUT>"]
   -s, --sio2jail
-          Makes toster use sio2jail for measuring program runtime and memory use more accurately. WARNING: enabling this flag can significantly slow down testing
+          Makes toster use sio2jail for measuring program runtime and memory use more accurately. By default limits memory use to 1 GiB. WARNING: enabling this flag can significantly slow down testing
   -m, --memory-limit <MEMORY_LIMIT>
           Sets a memory limit (in KiB) for the executed program. WARNING: enabling this flag can significantly slow down testing
   -g, --generate
