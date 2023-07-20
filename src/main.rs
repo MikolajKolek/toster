@@ -271,9 +271,7 @@ fn main() {
 		File::create(test_input_path).expect("Failed to create temporary file!");
 
 		let random_input_file_entry = input_files.get(0).expect("Couldn't get random input file").as_ref().expect("Failed to acquire reference!");
-		let random_input_file_path = random_input_file_entry.path();
-		let random_input_file_path_str = random_input_file_path.to_string_lossy().to_string();
-		let random_test_name = random_input_file_entry.path().file_stem().expect(&*format!("The input file {} is invalid!", random_input_file_path_str)).to_str().expect(&*format!("The input file {} is invalid!", random_input_file_path_str)).to_string();
+		let random_test_name = random_input_file_entry.path().file_stem().expect("Couldn't get the name of a random input file").to_str().expect("Couldn't get the name of a random input file").to_string();
 
 		let (test_result, _) = run_test(&true_location.unwrap().to_str().expect("").to_string(), test_input_path, &output_dir, &random_test_name, &args.out_ext, &tempdir, &(1 as u64), true, 0);
 		match test_result {
