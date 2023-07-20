@@ -42,6 +42,9 @@ Options:
           Print version
 ```
 
+# Compiler
+If you're using the sio2jail feature and want to make sure that your toster measurements are exactly identical to those of sio2 on a contest, you need to make sure that you're using the same compiler version as the one used in sio2. The compiler used in the [Polish Olympiad in Informatics](https://www.oi.edu.pl/) is G++ 10.2 (as detailed [here](https://www.oi.edu.pl/l/30oi_ustalenia_techniczne/)). If you want to install G++ 10.2, you can do so by building it from scratch (for example using [this](https://github.com/darrenjs/howto/blob/master/build_scripts/build_gcc_10.sh) script, only changing the version), or you can download a prebuilt version that I made [here](http://mikolajkolek.com/gcc-10.2).
+
 # License
 Toster is licensed under the [MIT Licence](https://github.com/MikolajKolek/toster/blob/master/LICENSE)
 
