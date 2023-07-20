@@ -1,10 +1,12 @@
-use std::{fs, process};
-use std::fs::Permissions;
-use std::os::unix::fs::PermissionsExt;
-use directories::BaseDirs;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+use {
+	std::{fs, process},
+	std::fs::Permissions,
+	std::os::unix::fs::PermissionsExt,
+	directories::BaseDirs
+};
 
-#[cfg(target_os = "linux")]
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn main() {
 	let base_dirs = BaseDirs::new().unwrap_or_else(|| {
 		println!("cargo:warning=No valid home directory path could be retrieved from the operating system. Sio2jail was not installed");
@@ -32,3 +34,6 @@ fn main() {
 		process::exit(0);
 	});
 }
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+fn main() {}

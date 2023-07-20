@@ -2,6 +2,7 @@ use std::cmp::max;
 use std::fs;
 use std::fs::File;
 use std::io::ErrorKind::NotFound;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use std::os::fd::AsRawFd;
 #[cfg(all(unix))]
 use std::os::unix::process::ExitStatusExt;
@@ -13,6 +14,7 @@ use std::time::{Duration, Instant};
 use colored::Colorize;
 use comfy_table::{Attribute, Cell, Color, Table};
 use comfy_table::ContentArrangement::Dynamic;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use command_fds::{CommandFdExt, FdMapping};
 use directories::BaseDirs;
 use tempfile::TempDir;
@@ -20,7 +22,9 @@ use terminal_size::{Height, Width};
 use wait_timeout::ChildExt;
 use crate::{Correct, Error, Incorrect, TestResult};
 use crate::test_result::{ExecutionError, ExecutionResult};
-use crate::test_result::ExecutionError::{RanOutOfMemory, RuntimeError, Sio2jailError, TimedOut};
+use crate::test_result::ExecutionError::{RuntimeError, TimedOut};
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+use crate::test_result::ExecutionError::{RanOutOfMemory, Sio2jailError};
 use crate::TestResult::NoOutputFile;
 
 pub fn get_sio2jail() -> String {
@@ -136,6 +140,7 @@ pub fn generate_output_default(
 	};
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn generate_output_sio2jail(
 	executable_path: &String,
 	input_file: File,
@@ -150,7 +155,6 @@ pub fn generate_output_sio2jail(
 	let error_file_path = tempdir.path().join(format!("{}-sio2jail-error", test_name));
 	let error_file = File::create(&error_file_path).expect("Failed to create temporary file!");
 
-
 	let mut child = Command::new(get_sio2jail())
 		.args(["-f", "3", "-o", "oiaug", "--mount-namespace", "off", "--pid-namespace", "off", "--uts-namespace", "off", "--ipc-namespace", "off", "--net-namespace", "off", "--capability-drop", "off", "--user-namespace", "off", "-s", "-m", &memory_limit.to_string(), "--", executable_path ])
 		.fd_mappings(vec![FdMapping {
@@ -164,7 +168,7 @@ pub fn generate_output_sio2jail(
 		.expect("Failed to run file!");
 
 	let command_result = child.wait_timeout(Duration::from_secs(*timeout)).unwrap();
-	let error_output= fs::read_to_string(error_file_path).expect("Couldn't read sio2jail error output");
+	let error_output = fs::read_to_string(error_file_path).expect("Couldn't read sio2jail error output");
 	if !error_output.is_empty() {
 		return if error_output == "terminate called after throwing an instance of 'std::bad_alloc'\n  what():  std::bad_alloc\n" {
 			(ExecutionResult { time_seconds: 0 as f64, memory_kilobytes: Some(*memory_limit as i64) }, Err(RanOutOfMemory))
@@ -186,6 +190,7 @@ pub fn generate_output_sio2jail(
 	return match command_result {
 		Some(status) => {
 			if status.code().is_none() {
+				#[cfg(all(unix))]
 				if cfg!(unix) && status.signal().expect("Sio2jail returned an invalid status code!") == 2 {
 					thread::sleep(Duration::from_secs(u64::MAX));
 				}
@@ -222,8 +227,8 @@ pub fn run_test(
 	out_extension: &String,
 	tempdir: &TempDir,
 	timeout: &u64,
-	use_sio2jail: bool,
-	memory_limit: u64,
+	_use_sio2jail: bool,
+	_memory_limit: u64,
 ) -> (TestResult, ExecutionResult) {
 	let input_file = File::open(input_file_path).expect("Failed to open input file!");
 
@@ -234,11 +239,15 @@ pub fn run_test(
 	let test_output_file_path = tempdir.path().join(format!("{}.out", test_name));
 	let test_output_file = File::create(&test_output_file_path).expect("Failed to create temporary file!");
 
-	let (execution_result, execution_error) = if use_sio2jail {
-		generate_output_sio2jail(executable_path, input_file, test_output_file, timeout, &memory_limit, tempdir, test_name)
+	#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+	let (execution_result, execution_error) = if _use_sio2jail {
+		generate_output_sio2jail(executable_path, input_file, test_output_file, timeout, &_memory_limit, tempdir, test_name)
 	} else {
 		generate_output_default(executable_path, input_file, test_output_file, timeout)
 	};
+	#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+	let (execution_result, execution_error) = generate_output_default(executable_path, input_file, test_output_file, timeout);
+
 	if execution_error.is_err() {
 		let result = execution_error.unwrap_err();
 		return (Error { test_name: test_name.clone(), error: result }, execution_result);

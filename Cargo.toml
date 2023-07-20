@@ -26,8 +26,11 @@ is_executable = "1.0.1"
 ctrlc = "3.2.4"
 once_cell = "1.17.0"
 directories = "5.0.1"
-command-fds = "0.2.2"
 which = "4.4.0"
+wsl = "0.1.0"
+
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
+command-fds = "0.2.2"
 
 [build-dependencies]
 directories = "5.0.1"

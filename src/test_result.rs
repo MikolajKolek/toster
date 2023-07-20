@@ -22,6 +22,7 @@ pub enum TestResult {
 	}
 }
 
+#[allow(unused)]
 pub enum ExecutionError {
 	TimedOut,
 	RanOutOfMemory,

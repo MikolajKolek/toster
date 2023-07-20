@@ -36,14 +36,12 @@ pub struct Args {
 	pub compile_command: String,
 
 	/// Makes toster use sio2jail for measuring program runtime and memory use more accurately. By default limits memory use to 1 GiB. WARNING: enabling this flag can significantly slow down testing
-	#[cfg(target_os = "linux")]
-	#[cfg(target_arch = "x86_64")]
+	#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 	#[clap(short, long, action)]
 	pub sio2jail: bool,
 
 	/// Sets a memory limit (in KiB) for the executed program. WARNING: enabling this flag can significantly slow down testing
-	#[cfg(target_os = "linux")]
-	#[cfg(target_arch = "x86_64")]
+	#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 	#[clap(short, long, value_parser)]
 	pub memory_limit: Option<u64>,
 

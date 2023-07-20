@@ -162,8 +162,14 @@ fn main() {
 	let input_dir: String = args.io.clone().unwrap_or(args.r#in);
 	let output_dir: String = args.io.clone().unwrap_or(args.out);
 
-	let mut sio2jail = if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") { args.sio2jail } else { false };
-	let mut memory_limit = if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") { args.memory_limit.unwrap_or(0) } else { 0 };
+	#[allow(unused_assignments)]
+	let mut sio2jail = false;
+	#[allow(unused_assignments)]
+	let mut memory_limit = 0;
+	#[cfg(all(target_os = "linux", target_arch = "x86_64"))]{
+		sio2jail = args.sio2jail;
+		memory_limit = args.memory_limit.unwrap_or(0);
+	}
 
 	if sio2jail && args.generate {
 		println!("{}", "You can't have the --generate and --sio2jail flags on at the same time.".red());
@@ -212,8 +218,9 @@ fn main() {
 	}
 
 	// Compiling
+	let extension = Path::new(&args.filename).extension().expect("Couldn't get the extension of the provided file").to_str().expect("Couldn't get the extension of the provided file");
 	let executable: String;
-	if is_executable(&args.filename) {
+	if is_executable(&args.filename) && !(wsl::is_wsl() && (extension == "cpp" || extension == "cc" || extension == "cxx" || extension == "c")) {
 		executable = tempdir.path().join(format!("{}.o", Path::new(&args.filename).file_name().expect("The provided filename is invalid!").to_str().expect("The provided filename is invalid!"))).to_str().expect("The provided filename is invalid!").to_string();
 		fs::copy(&args.filename, &executable).expect("The provided filename is invalid!");
 	}
