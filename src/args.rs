@@ -40,7 +40,7 @@ pub struct Args {
 	#[clap(short, long, action)]
 	pub sio2jail: bool,
 
-	/// Sets a memory limit (in KiB) for the executed program. WARNING: enabling this flag can significantly slow down testing
+	/// Sets a memory limit (in KiB) for the executed program and enables the sio2jail flag. WARNING: enabling this flag can significantly slow down testing
 	#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 	#[clap(short, long, value_parser)]
 	pub memory_limit: Option<u64>,

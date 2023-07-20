@@ -33,7 +33,7 @@ Options:
   -s, --sio2jail
           Makes toster use sio2jail for measuring program runtime and memory use more accurately. By default limits memory use to 1 GiB. WARNING: enabling this flag can significantly slow down testing
   -m, --memory-limit <MEMORY_LIMIT>
-          Sets a memory limit (in KiB) for the executed program. WARNING: enabling this flag can significantly slow down testing
+          Sets a memory limit (in KiB) for the executed program and enables the sio2jail flag. WARNING: enabling this flag can significantly slow down testing
   -g, --generate
           Makes toster generate output files in the output directory instead of comparing the program's output with the files in the output directory
   -h, --help
