@@ -30,12 +30,16 @@ Options:
           The number of seconds after which compilation times out if it doesn't finish [default: 10]
   -c, --compile-command <COMPILE_COMMAND>
           The command used to compile the file. <IN> gets replaced with the path to the source code file, <OUT> is the executable output location [default: "g++ -std=c++17 -O3 -static <IN> -o <OUT>"]
+  -s, --sio2jail
+          Makes toster use sio2jail for measuring program runtime and memory use more accurately. WARNING: enabling this flag can significantly slow down testing
+  -m, --memory-limit <MEMORY_LIMIT>
+          Sets a memory limit (in KiB) for the executed program. WARNING: enabling this flag can significantly slow down testing
   -g, --generate
-          Makes the tester generate output files in the output directory instead of comparing the program's output with the files in the output directory
+          Makes toster generate output files in the output directory instead of comparing the program's output with the files in the output directory
   -h, --help
-          Print help information
+          Print help
   -V, --version
-          Print version information
+          Print version
 ```
 
 # License

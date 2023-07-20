@@ -4,39 +4,42 @@ mod testing_utils;
 
 use std::{fs, panic, process, thread};
 use std::cmp::Ordering;
-use std::fmt::{Write as FmtWrite};
+use std::fmt::Write as FmtWrite;
 use std::fs::{File, read_dir};
 use std::panic::PanicInfo;
-use std::path::{Path};
+use std::path::Path;
 use std::sync::{Arc, atomic, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::time::{Duration, Instant};
 use atomic_counter::{AtomicCounter, RelaxedCounter};
-use indicatif::{ParallelProgressIterator, ProgressState, ProgressStyle};
-use lazy_static::lazy_static;
-use rayon::iter::{IntoParallelRefIterator};
-use rayon::prelude::*;
-use tempfile::{tempdir};
-use args::Args;
 use clap::Parser;
 use colored::Colorize;
 use human_panic::{handle_dump, Metadata, print_msg};
+use indicatif::{ParallelProgressIterator, ProgressState, ProgressStyle};
 use is_executable::is_executable;
+use lazy_static::lazy_static;
+use once_cell::sync::OnceCell;
+use rayon::iter::IntoParallelRefIterator;
+use rayon::prelude::*;
+use tempfile::tempdir;
+use which::which;
+use args::Args;
 use crate::test_result::{ExecutionError, TestResult};
-use crate::testing_utils::{compile_cpp, generate_output, run_test};
+use crate::testing_utils::{compile_cpp, generate_output_default, get_sio2jail, run_test};
 use crate::TestResult::{Correct, Error, Incorrect, NoOutputFile};
-use once_cell::sync::{OnceCell};
 
 lazy_static! {
     static ref SUCCESS_COUNT: RelaxedCounter = RelaxedCounter::new(0);
+	static ref INCORRECT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
     static ref TIMED_OUT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
-    static ref INCORRECT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
-    static ref NON_ZER_RETURN_COUNT: RelaxedCounter = RelaxedCounter::new(0);
-    static ref TERMINATED_COUNT: RelaxedCounter = RelaxedCounter::new(0);
+    static ref OUT_OF_MEMORY: RelaxedCounter = RelaxedCounter::new(0);
+    static ref RUNTIME_ERROR: RelaxedCounter = RelaxedCounter::new(0);
     static ref NO_OUTPUT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
+	static ref SIO2JAIL_ERROR: RelaxedCounter = RelaxedCounter::new(0);
 
-	static ref SLOWEST_TEST: Arc<Mutex<(f64, String)>> = Arc::new(Mutex::new((-1 as f64, String::new())));
-	static ref ERRORS: Arc<Mutex<Vec<TestResult>>> = Arc::new(Mutex::new(vec![]));
+    static ref SLOWEST_TEST: Arc<Mutex<(f64, String)>> = Arc::new(Mutex::new((-1 as f64, String::new())));
+    static ref MOST_MEMORY_USED: Arc<Mutex<(i64, String)>> = Arc::new(Mutex::new((-1, String::new())));
+    static ref ERRORS: Arc<Mutex<Vec<TestResult>>> = Arc::new(Mutex::new(vec![]));
 }
 
 static TIME_BEFORE_TESTING: OnceCell<Instant> = OnceCell::new();
@@ -68,11 +71,12 @@ fn setup_panic() {
 
 fn format_error_counts() -> String {
 	[
+		(INCORRECT_COUNT.get(), if INCORRECT_COUNT.get() > 1 { "wrong answers" } else { "wrong answer" }, ),
 		(TIMED_OUT_COUNT.get(), "timed out"),
-		(INCORRECT_COUNT.get(), if INCORRECT_COUNT.get() > 1 {"wrong answers"} else {"wrong answer"}),
-		(NON_ZER_RETURN_COUNT.get(), if NON_ZER_RETURN_COUNT.get() > 1 {"non-zero return codes"} else {"non-zero return code"}),
-		(TERMINATED_COUNT.get(), if TERMINATED_COUNT.get() > 1 {"terminated with errors"} else {"terminated with error"}),
-		(NO_OUTPUT_COUNT.get(), if NO_OUTPUT_COUNT.get() > 1 {"without output files"} else {"without output file"}),
+		(OUT_OF_MEMORY.get(), "out of memory"),
+		(RUNTIME_ERROR.get(), if RUNTIME_ERROR.get() > 1 { "runtime errors" } else { "runtime error" }),
+		(NO_OUTPUT_COUNT.get(), if NO_OUTPUT_COUNT.get() > 1 { "without output files" } else { "without output file" }),
+		(SIO2JAIL_ERROR.get(), if SIO2JAIL_ERROR.get() > 1 { "sio2jail errors" } else { "sio2jail error" })
 	]
 		.into_iter()
 		.filter(|(count, _)| count > &0)
@@ -84,11 +88,13 @@ fn format_error_counts() -> String {
 fn print_output(stopped_early: bool) {
 	let slowest_test_clone = Arc::clone(&SLOWEST_TEST);
 	let errors_clone = Arc::clone(&ERRORS);
+	let most_memory_clone = Arc::clone(&MOST_MEMORY_USED);
 	let slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");
 	let mut errors_mutex = errors_clone.lock().expect("Failed to acquire mutex!");
+	let most_memory_mutex = most_memory_clone.lock().expect("Failed to acquire mutex!");
 
 	let testing_time = TIME_BEFORE_TESTING.get().expect("Time before testing not initialized!").elapsed().as_secs_f64();
-	let tested_count = SUCCESS_COUNT.get() + TIMED_OUT_COUNT.get() + INCORRECT_COUNT.get() + NON_ZER_RETURN_COUNT.get() + TERMINATED_COUNT.get() + NO_OUTPUT_COUNT.get();
+	let tested_count = SUCCESS_COUNT.get() + TIMED_OUT_COUNT.get() + INCORRECT_COUNT.get() + OUT_OF_MEMORY.get() + RUNTIME_ERROR.get() + NO_OUTPUT_COUNT.get() + SIO2JAIL_ERROR.get();
 	let not_tested_count = &TEST_COUNT.load(atomic::Ordering::Acquire) - tested_count;
 
 	let error_counts = format_error_counts();
@@ -113,11 +119,12 @@ fn print_output(stopped_early: bool) {
 			);
 		}
 		false => {
-			println!("Testing {} {:.2}s (Slowest test: {} at {:.3}s)\nResults: {}{}{}",
+			println!("Testing {} {:.2}s (Slowest test: {} at {:.3}s{})\nResults: {}{}{}",
 			         if stopped_early {"stopped after"} else {"finished in"},
 			         testing_time,
 			         slowest_test_mutex.1,
 			         slowest_test_mutex.0,
+					 if most_memory_mutex.0 != -1 { format!(", most memory used: {} at {}KB", most_memory_mutex.1, most_memory_mutex.0) } else { String::new() },
 			         format!("{} correct", SUCCESS_COUNT.get()).green(),
 			         error_text,
 			         not_finished_text
@@ -155,6 +162,20 @@ fn main() {
 	let input_dir: String = args.io.clone().unwrap_or(args.r#in);
 	let output_dir: String = args.io.clone().unwrap_or(args.out);
 
+	let mut sio2jail = if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") { args.sio2jail } else { false };
+	let memory_limit = if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") { args.memory_limit.unwrap_or(0) } else { 0 };
+
+	if sio2jail && args.generate {
+		println!("{}", "You can't have the --generate and --sio2jail flags on at the same time.".red());
+		return;
+	}
+	if memory_limit != 0 && !sio2jail {
+		sio2jail = true;
+	}
+	if sio2jail && get_sio2jail() == String::new() {
+		return;
+	}
+
 	// Making sure that the input and output directories as well as the source code file exist
 	if !Path::new(&output_dir).is_dir() {
 		if args.generate {
@@ -165,8 +186,14 @@ fn main() {
 			return;
 		}
 	}
-	if !Path::new(&input_dir).is_dir() { println!("{}", "The input directory does not exist".red()); return; }
-	if !Path::new(&args.filename).is_file() { println!("{}", "The provided file does not exist".red()); return; }
+	if !Path::new(&input_dir).is_dir() {
+		println!("{}", "The input directory does not exist".red());
+		return;
+	}
+	if !Path::new(&args.filename).is_file() {
+		println!("{}", "The provided file does not exist".red());
+		return;
+	}
 
 	if !args.compile_command.contains("<IN>") || !args.compile_command.contains("<OUT>") {
 		println!("{}", "The compile command is invalid:".red());
@@ -204,7 +231,7 @@ fn main() {
 		.with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed!"))
 		.progress_chars("#>-")
 		.with_key("correct", |_state: &ProgressState, w: &mut dyn FmtWrite|
-			write!(w, "{}", format!("{} {}", &SUCCESS_COUNT.get(), if GENERATE.load(atomic::Ordering::Acquire) {"successful"} else {if SUCCESS_COUNT.get() != 1 {"correct answers"} else {"correct answer"}}).green()).expect("Displaying the progress bar failed!")
+			write!(w, "{}", format!("{} {}", &SUCCESS_COUNT.get(), if GENERATE.load(atomic::Ordering::Acquire) { "successful" } else { if SUCCESS_COUNT.get() != 1 { "correct answers" } else { "correct answer" } }).green()).expect("Displaying the progress bar failed!")
 		)
 		.with_key("incorrect", |_state: &ProgressState, w: &mut dyn FmtWrite|
 			write!(w, "{}", format_error_counts()).expect("Displaying the progress bar failed!")
@@ -220,8 +247,8 @@ fn main() {
 		let extension = input_path.extension();
 
 		return match extension {
-			None => {false}
-			Some(ext) => { ".".to_owned() + &ext.to_str().unwrap_or("") == args.in_ext }
+			None => false,
+			Some(ext) => ".".to_owned() + &ext.to_str().unwrap_or("") == args.in_ext
 		};
 	});
 	TEST_COUNT.store(input_files.len(), atomic::Ordering::Release);
@@ -231,7 +258,41 @@ fn main() {
 		return;
 	}
 
-	TIME_BEFORE_TESTING.set(Instant::now()).expect("Couldn't set time before testing!");
+	// Testing for sio2jail errors
+	if sio2jail {
+		let true_location = which("true");
+		if true_location.is_err() {
+			println!("{}", "The executable for the \"true\" command could not be found".red());
+			return;
+		}
+
+		let test_input = tempdir.path().join(format!("test.in")).to_str().expect("The provided filename is invalid!").to_string();
+		let test_input_path = Path::new(&test_input);
+		File::create(test_input_path).expect("Failed to create temporary file!");
+
+		let random_input_file_entry = input_files.get(0).expect("Couldn't get random input file").as_ref().expect("Failed to acquire reference!");
+		let random_input_file_path = random_input_file_entry.path();
+		let random_input_file_path_str = random_input_file_path.to_string_lossy().to_string();
+		let random_test_name = random_input_file_entry.path().file_stem().expect(&*format!("The input file {} is invalid!", random_input_file_path_str)).to_str().expect(&*format!("The input file {} is invalid!", random_input_file_path_str)).to_string();
+
+		let (test_result, _) = run_test(&true_location.unwrap().to_str().expect("").to_string(), test_input_path, &output_dir, &random_test_name, &args.out_ext, &tempdir, &(1 as u64), true, 0);
+		match test_result {
+			Error { error: ExecutionError::Sio2jailError(error), .. } => {
+				if error == "Exception occurred: System error occurred: perf event open failed: Permission denied: error 13: Permission denied\n" {
+					println!("{}", "You need to run the following command to use toster with sio2jail. You may also put this option in your /etc/sysctl.conf. This will make the setting persist across reboots.".red());
+					println!("{}", "sudo sysctl -w kernel.perf_event_paranoid=-1".bright_black().italic());
+				}
+				else {
+					println!("Sio2jail error: {}", error.red());
+				}
+
+				return;
+			}
+			_ => {}
+		}
+	}
+
+	TIME_BEFORE_TESTING.set(Instant::now()).expect("Couldn't store timestamp before testing!");
 	// Running tests / generating output
 	input_files.par_iter().progress_with_style(style).for_each(|input| {
 		let input_file_entry = input.as_ref().expect("Failed to acquire reference!");
@@ -240,27 +301,29 @@ fn main() {
 		let test_name = input_file_entry.path().file_stem().expect(&*format!("The input file {} is invalid!", input_file_path_str)).to_str().expect(&*format!("The input file {} is invalid!", input_file_path_str)).to_string();
 
 		let mut test_time: f64 = f64::MAX;
+		let mut test_memory: i64 = -1;
 		if args.generate {
 			let input_file = File::open(input_file_path).expect(&*format!("Could not open input file {}", input_file_path_str));
 			let output_file_path = format!("{}/{}{}", &output_dir, test_name, args.out_ext);
 			let output_file = File::create(Path::new(&output_file_path)).expect("Failed to create output file!");
 
-			let result = generate_output(&executable, input_file, output_file, &args.timeout);
+			let (execution_result, execution_error) = generate_output_default(&executable, input_file, output_file, &args.timeout);
 			if !RECEIVED_CTRL_C.load(atomic::Ordering::Acquire) {
-				match result {
-					Ok(time) => {
-						test_time = time;
+				match execution_error {
+					Ok(()) => {
+						test_time = execution_result.time_seconds;
 						SUCCESS_COUNT.inc();
 					}
-					Err((error, time)) => {
+					Err(error) => {
 						match error {
 							ExecutionError::TimedOut => { TIMED_OUT_COUNT.inc(); }
-							ExecutionError::NonZeroReturn(_) => { NON_ZER_RETURN_COUNT.inc(); }
-							ExecutionError::Terminated(_) => { TERMINATED_COUNT.inc(); }
+							ExecutionError::RanOutOfMemory => { OUT_OF_MEMORY.inc(); }
+							ExecutionError::RuntimeError(_) => { RUNTIME_ERROR.inc(); }
+							ExecutionError::Sio2jailError(_) => {}
 						}
 						let clone = Arc::clone(&ERRORS);
 						clone.lock().expect("Failed to acquire mutex!").push(Error { test_name: test_name.clone(), error });
-						test_time = time;
+						test_time = execution_result.time_seconds;
 					}
 				}
 			}
@@ -269,22 +332,24 @@ fn main() {
 			}
 		}
 		else {
-			let (result, time) = run_test(&executable, input_file_path.as_path(), &output_dir, &test_name, &args.out_ext, &tempdir, &args.timeout);
-			test_time = time;
+			let (test_result, execution_result) = run_test(&executable, input_file_path.as_path(), &output_dir, &test_name, &args.out_ext, &tempdir, &args.timeout, sio2jail, memory_limit);
+			test_time = execution_result.time_seconds;
+			test_memory = execution_result.memory_kilobytes.unwrap_or(-1);
 
 			if !RECEIVED_CTRL_C.load(atomic::Ordering::Acquire) {
-				match result {
+				match test_result {
 					Correct { .. } => { SUCCESS_COUNT.inc(); }
 					Incorrect { .. } => { INCORRECT_COUNT.inc(); }
-					Error { error: ExecutionError::NonZeroReturn(_), .. } => { NON_ZER_RETURN_COUNT.inc(); }
+					Error { error: ExecutionError::RanOutOfMemory, .. } => { OUT_OF_MEMORY.inc(); }
 					Error { error: ExecutionError::TimedOut, .. } => { TIMED_OUT_COUNT.inc(); }
-					Error { error: ExecutionError::Terminated(_), .. } => { TERMINATED_COUNT.inc(); }
+					Error { error: ExecutionError::RuntimeError(_), .. } => { RUNTIME_ERROR.inc(); }
+					Error { error: ExecutionError::Sio2jailError(_), .. } => { SIO2JAIL_ERROR.inc(); }
 					NoOutputFile { .. } => { NO_OUTPUT_COUNT.inc(); }
 				}
 
-				if !result.is_correct() {
+				if !test_result.is_correct() {
 					let clone = Arc::clone(&ERRORS);
-					clone.lock().expect("Failed to acquire mutex!").push(result);
+					clone.lock().expect("Failed to acquire mutex!").push(test_result);
 				}
 			}
 			else {
@@ -297,6 +362,12 @@ fn main() {
 			let mut slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");
 			if test_time > slowest_test_mutex.0 {
 				*slowest_test_mutex = (test_time, test_name.clone());
+			}
+
+			let most_memory_clone = Arc::clone(&MOST_MEMORY_USED);
+			let mut most_memory_mutex = most_memory_clone.lock().expect("Failed to acquire mutex!");
+			if test_memory > most_memory_mutex.0 {
+				*most_memory_mutex = (test_memory, test_name.clone());
 			}
 		}
 		else {

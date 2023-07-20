@@ -1,5 +1,10 @@
 use colored::Colorize;
 
+pub struct ExecutionResult {
+	pub(crate) memory_kilobytes: Option<i64>,
+	pub(crate) time_seconds: f64
+}
+
 pub enum TestResult {
 	Correct {
 		test_name: String
@@ -19,8 +24,9 @@ pub enum TestResult {
 
 pub enum ExecutionError {
 	TimedOut,
-	NonZeroReturn(i32),
-	Terminated(String)
+	RanOutOfMemory,
+	RuntimeError(String),
+	Sio2jailError(String)
 }
 
 impl TestResult {
@@ -28,11 +34,11 @@ impl TestResult {
 		let mut result: String = String::new();
 
 		match self {
-			TestResult::Correct {test_name} => {
+			TestResult::Correct { test_name } => {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
 				result.push_str(&format!("{}", "Timed out".red()));
 			}
-			TestResult::Incorrect {test_name, diff} => {
+			TestResult::Incorrect { test_name, diff } => {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
 				result.push_str(diff);
 			}
@@ -51,10 +57,10 @@ impl TestResult {
 
 	pub fn test_name(&self) -> String {
 		return match self {
-			TestResult::Correct { test_name } => {test_name.clone()}
-			TestResult::Incorrect { test_name, .. } => {test_name.clone()}
-			TestResult::Error { test_name, .. } => {test_name.clone()}
-			TestResult::NoOutputFile { test_name } => {test_name.clone()}
+			TestResult::Correct { test_name } => test_name.clone(),
+			TestResult::Incorrect { test_name, .. } => test_name.clone(),
+			TestResult::Error { test_name, .. } => test_name.clone(),
+			TestResult::NoOutputFile { test_name } => test_name.clone()
 		};
 	}
 
@@ -69,15 +75,10 @@ impl TestResult {
 impl ExecutionError {
 	pub fn to_string(&self) -> String {
 		return match self {
-			ExecutionError::TimedOut => {
-				"Timed out".to_string()
-			}
-			ExecutionError::NonZeroReturn(code) => {
-				format!("Runtime error - the program returned a non-zero return code: {}", code)
-			}
-			ExecutionError::Terminated(message) => {
-				format!("Runtime error - the process was terminated with the following error:\n{}", message)
-			}
-		}
+			ExecutionError::TimedOut => "Timed out".to_string(),
+			ExecutionError::RanOutOfMemory => "The program exceeded its memory limit".to_string(),
+			ExecutionError::RuntimeError(error) => format!("Runtime error {}", error),
+			ExecutionError::Sio2jailError(error) => format!("Sio2jail error: {}", error),
+		};
 	}
 }
