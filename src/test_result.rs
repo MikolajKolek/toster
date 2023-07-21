@@ -35,10 +35,7 @@ impl TestResult {
 		let mut result: String = String::new();
 
 		match self {
-			TestResult::Correct { test_name } => {
-				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
-				result.push_str(&format!("{}", "Timed out".red()));
-			}
+			TestResult::Correct { .. } => {}
 			TestResult::Incorrect { test_name, diff } => {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
 				result.push_str(diff);
@@ -77,7 +74,7 @@ impl ExecutionError {
 	pub fn to_string(&self) -> String {
 		return match self {
 			ExecutionError::TimedOut => "Timed out".to_string(),
-			ExecutionError::RanOutOfMemory => "The program exceeded its memory limit".to_string(),
+			ExecutionError::RanOutOfMemory => "Memory limit exceeded".to_string(),
 			ExecutionError::RuntimeError(error) => format!("Runtime error {}", error),
 			ExecutionError::Sio2jailError(error) => format!("Sio2jail error: {}", error),
 		};

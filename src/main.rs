@@ -166,7 +166,7 @@ fn main() {
 	let mut sio2jail = false;
 	#[allow(unused_assignments)]
 	let mut memory_limit = 0;
-	#[cfg(all(target_os = "linux", target_arch = "x86_64"))]{
+	#[cfg(all(target_os = "linux", target_arch = "x86_64"))] {
 		sio2jail = args.sio2jail;
 		memory_limit = args.memory_limit.unwrap_or(0);
 	}
@@ -283,7 +283,7 @@ fn main() {
 		let random_input_file_entry = input_files.get(0).expect("Couldn't get random input file").as_ref().expect("Failed to acquire reference!");
 		let random_test_name = random_input_file_entry.path().file_stem().expect("Couldn't get the name of a random input file").to_str().expect("Couldn't get the name of a random input file").to_string();
 
-		let (test_result, _) = run_test(&true_location.unwrap().to_str().expect("").to_string(), test_input_path, &output_dir, &random_test_name, &args.out_ext, &tempdir, &(1 as u64), true, 0);
+		let (test_result, _) = run_test(&true_location.unwrap().to_str().expect("The executable for the \"true\" command has an invalid path").to_string(), test_input_path, &output_dir, &random_test_name, &args.out_ext, &tempdir, &(1 as u64), true, 0);
 		match test_result {
 			Error { error: ExecutionError::Sio2jailError(error), .. } => {
 				if error == "Exception occurred: System error occurred: perf event open failed: Permission denied: error 13: Permission denied\n" {
@@ -319,7 +319,6 @@ fn main() {
 			if !RECEIVED_CTRL_C.load(atomic::Ordering::Acquire) {
 				match execution_error {
 					Ok(()) => {
-						test_time = execution_result.time_seconds;
 						SUCCESS_COUNT.inc();
 					}
 					Err(error) => {
@@ -331,9 +330,10 @@ fn main() {
 						}
 						let clone = Arc::clone(&ERRORS);
 						clone.lock().expect("Failed to acquire mutex!").push(Error { test_name: test_name.clone(), error });
-						test_time = execution_result.time_seconds;
 					}
 				}
+
+				test_time = execution_result.time_seconds;
 			}
 			else {
 				thread::sleep(Duration::from_secs(u64::MAX));
