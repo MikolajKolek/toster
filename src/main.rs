@@ -2,10 +2,11 @@ mod args;
 mod test_result;
 mod testing_utils;
 
-use std::{fs, process, thread};
+use std::{fs, panic, process, thread};
 use std::cmp::Ordering;
 use std::fmt::Write as FmtWrite;
 use std::fs::{File, read_dir};
+use std::panic::PanicInfo;
 use std::path::Path;
 use std::sync::{Arc, atomic, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
@@ -13,7 +14,7 @@ use std::time::{Duration, Instant};
 use atomic_counter::{AtomicCounter, RelaxedCounter};
 use clap::Parser;
 use colored::Colorize;
-use human_panic::setup_panic;
+use human_panic::{handle_dump, print_msg};
 use indicatif::{ParallelProgressIterator, ProgressState, ProgressStyle};
 use is_executable::is_executable;
 use lazy_static::lazy_static;
@@ -44,6 +45,7 @@ static TIME_BEFORE_TESTING: OnceLock<Instant> = OnceLock::new();
 static TEST_COUNT: AtomicUsize = AtomicUsize::new(0);
 static GENERATE: AtomicBool = AtomicBool::new(false);
 static RECEIVED_CTRL_C: AtomicBool = AtomicBool::new(false);
+static PANICKING: AtomicBool = AtomicBool::new(false);
 
 fn format_error_counts() -> String {
 	[
@@ -131,8 +133,31 @@ fn print_output(stopped_early: bool) {
 	process::exit(0);
 }
 
+fn setup_panic() {
+	match human_panic::PanicStyle::default() {
+		human_panic::PanicStyle::Debug => {}
+		human_panic::PanicStyle::Human => {
+			let meta = human_panic::metadata!();
+
+			panic::set_hook(Box::new(move |info: &PanicInfo| {
+				if !PANICKING.load(atomic::Ordering::Acquire) {
+					PANICKING.store(true, atomic::Ordering::Release);
+
+					let file_path = handle_dump(&meta, info);
+					print_msg(file_path, &meta)
+						.expect("human-panic: printing error message to console failed");
+					process::exit(0);
+				}
+				else {
+					thread::sleep(Duration::from_secs(u64::MAX));
+				}
+			}));
+		}
+	}
+}
+
 fn main() {
-	setup_panic!();
+	setup_panic();
 	ctrlc::set_handler(move || {
 		RECEIVED_CTRL_C.store(true, atomic::Ordering::Release);
 		print_output(true)
