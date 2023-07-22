@@ -81,26 +81,32 @@ fn print_output(stopped_early: bool) {
 		println!();
 	}
 
+	let mut additional_info = String::new();
+	if slowest_test_mutex.0 != -1 as f64 {
+		additional_info = format!(" (Slowest test: {} at {:.3}s{})",
+		                          slowest_test_mutex.1,
+		                          slowest_test_mutex.0,
+		                          if most_memory_mutex.0 != -1 { format!(", most memory used: {} at {}KiB", most_memory_mutex.1, most_memory_mutex.0) } else { String::new() }
+		)
+	}
+
 	// Printing the output
 	match GENERATE.load(atomic::Ordering::Acquire) {
 		true => {
-			println!("Generation {} {:.2}s (Slowest test: {} at {:.3}s)\nResults: {}{}{}",
+			println!("Generation {} {:.2}s{}\nResults: {}{}{}",
 			         if stopped_early {"stopped after"} else {"finished in"},
 			         testing_time,
-			         slowest_test_mutex.1,
-			         slowest_test_mutex.0,
+			         additional_info,
 			         format!("{} successful", SUCCESS_COUNT.get()).green(),
 			         error_text,
 			         not_finished_text
 			);
 		}
 		false => {
-			println!("Testing {} {:.2}s (Slowest test: {} at {:.3}s{})\nResults: {}{}{}",
+			println!("Testing {} {:.2}s{}\nResults: {}{}{}",
 			         if stopped_early {"stopped after"} else {"finished in"},
 			         testing_time,
-			         slowest_test_mutex.1,
-			         slowest_test_mutex.0,
-					 if most_memory_mutex.0 != -1 { format!(", most memory used: {} at {}KiB", most_memory_mutex.1, most_memory_mutex.0) } else { String::new() },
+			         additional_info,
 			         format!("{} correct", SUCCESS_COUNT.get()).green(),
 			         error_text,
 			         not_finished_text
