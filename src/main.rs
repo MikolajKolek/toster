@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 use std::fmt::Write as FmtWrite;
 use std::fs::{File, read_dir};
 use std::path::Path;
-use std::sync::{Arc, atomic, Mutex};
+use std::sync::{Arc, atomic, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::time::{Duration, Instant};
 use atomic_counter::{AtomicCounter, RelaxedCounter};
@@ -17,7 +17,6 @@ use human_panic::setup_panic;
 use indicatif::{ParallelProgressIterator, ProgressState, ProgressStyle};
 use is_executable::is_executable;
 use lazy_static::lazy_static;
-use once_cell::sync::OnceCell;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::prelude::*;
 use tempfile::tempdir;
@@ -41,7 +40,7 @@ lazy_static! {
     static ref ERRORS: Arc<Mutex<Vec<TestResult>>> = Arc::new(Mutex::new(vec![]));
 }
 
-static TIME_BEFORE_TESTING: OnceCell<Instant> = OnceCell::new();
+static TIME_BEFORE_TESTING: OnceLock<Instant> = OnceLock::new();
 static TEST_COUNT: AtomicUsize = AtomicUsize::new(0);
 static GENERATE: AtomicBool = AtomicBool::new(false);
 static RECEIVED_CTRL_C: AtomicBool = AtomicBool::new(false);
