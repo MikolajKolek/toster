@@ -72,7 +72,12 @@ fn print_output(stopped_early: bool) {
 	let mut errors_mutex = errors_clone.lock().expect("Failed to acquire mutex!");
 	let most_memory_mutex = most_memory_clone.lock().expect("Failed to acquire mutex!");
 
-	let testing_time = TIME_BEFORE_TESTING.get().expect("Time before testing not initialized!").elapsed().as_secs_f64();
+	if TIME_BEFORE_TESTING.get().is_none() {
+		println!("{}", "Toster was stopped before testing could start".red());
+		process::exit(0);
+	}
+
+	let testing_time = TIME_BEFORE_TESTING.get().unwrap().elapsed().as_secs_f64();
 	let tested_count = SUCCESS_COUNT.get() + TIMED_OUT_COUNT.get() + INCORRECT_COUNT.get() + MEMORY_LIMIT_EXCEEDED_COUNT.get() + RUNTIME_ERROR_COUNT.get() + NO_OUTPUT_FILE_COUNT.get() + SIO2JAIL_ERROR_COUNT.get();
 	let not_tested_count = &TEST_COUNT.load(atomic::Ordering::Acquire) - tested_count;
 
