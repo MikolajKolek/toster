@@ -194,6 +194,14 @@ fn main() {
 	}
 
 	// Making sure that the input and output directories as well as the source code file exist
+	if !args.io.is_none() && !Path::new(&args.io.unwrap()).is_dir() {
+		println!("{}", "The input/output directory does not exist".red());
+		return;
+	}
+	if !Path::new(&input_dir).is_dir() {
+		println!("{}", "The input directory does not exist".red());
+		return;
+	}
 	if !Path::new(&output_dir).is_dir() {
 		if args.generate {
 			fs::create_dir(&output_dir).expect("Failed to create output directory!");
@@ -202,10 +210,6 @@ fn main() {
 			println!("{}", "The output directory does not exist".red());
 			return;
 		}
-	}
-	if !Path::new(&input_dir).is_dir() {
-		println!("{}", "The input directory does not exist".red());
-		return;
 	}
 	if !Path::new(&args.filename).is_file() {
 		println!("{}", "The provided file does not exist".red());
