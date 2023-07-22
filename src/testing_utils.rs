@@ -168,55 +168,51 @@ pub fn generate_output_sio2jail(
 		.expect("Failed to run file!");
 
 	let command_result = child.wait_timeout(Duration::from_secs(*timeout)).unwrap();
+	if command_result.is_none() {
+		child.kill().unwrap();
+		return (ExecutionResult { time_seconds: *timeout as f64, memory_kilobytes: None }, Err(TimedOut));
+	}
+
 	let error_output = fs::read_to_string(error_file_path).expect("Couldn't read sio2jail error output");
 	if !error_output.is_empty() {
 		return if error_output == "terminate called after throwing an instance of 'std::bad_alloc'\n  what():  std::bad_alloc\n" {
 			(ExecutionResult { time_seconds: 0 as f64, memory_kilobytes: Some(*memory_limit as i64) }, Err(RanOutOfMemory))
 		} else {
-			(ExecutionResult { time_seconds: 0 as f64, memory_kilobytes: Some(0) }, Err(Sio2jailError(error_output)))
+			(ExecutionResult { time_seconds: 0 as f64, memory_kilobytes: None }, Err(Sio2jailError(error_output)))
 		}
 	}
 
 	let sio2jail_output = fs::read_to_string(sio2jail_output_file_path).expect("Couldn't read temporary sio2jail file");
 	let split: Vec<&str> = sio2jail_output.split_whitespace().collect();
 	if split.len() < 6 {
-		panic!("The sio2jail output is too short: {}", sio2jail_output);
+		return (ExecutionResult { time_seconds: 0 as f64, memory_kilobytes: None }, Err(Sio2jailError(format!("The sio2jail output is too short: {}", sio2jail_output))));
 	}
 	let sio2jail_status = split[0];
 	let time_seconds = split[2].parse::<f64>().expect("Sio2jail returned an invalid runtime in the output") / 1000.0;
 	let memory_kilobytes = split[4].parse::<i64>().expect("Sio2jail returned invalid memory usage in the output");
 	let error_message = sio2jail_output.lines().nth(1);
 
-	return match command_result {
-		Some(status) => {
-			if status.code().is_none() {
-				#[cfg(all(unix))]
-				if cfg!(unix) && status.signal().expect("Sio2jail returned an invalid status code!") == 2 {
-					thread::sleep(Duration::from_secs(u64::MAX));
-				}
-
-				return (ExecutionResult { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, Err(RuntimeError(format!    ("- the process was terminated with the following error:\n{}", status.to_string()))))
-			}
-			if status.code().unwrap() != 0 {
-				panic!("Sio2jail returned an invalid status code: {}", status.code().unwrap());
-			}
-
-			(ExecutionResult { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, match sio2jail_status {
-				"OK" => Ok(()),
-				"RE" | "RV" => Err(RuntimeError(if error_message.is_none() { String::new() } else { format!("- {}", error_message.unwrap()) })),
-				"TLE" => Err(TimedOut),
-				"MLE" => Err(RanOutOfMemory),
-				"OLE" => Err(RuntimeError(format!("- output limit exceeded"))),
-				_ => {
-					panic!("Sio2jail returned an invalid status in the output: {}", sio2jail_status)
-				}
-			})
+	let status = command_result.unwrap();
+	if status.code().is_none() {
+		#[cfg(all(unix))]
+		if cfg!(unix) && status.signal().expect("Sio2jail returned an invalid status code!") == 2 {
+			thread::sleep(Duration::from_secs(u64::MAX));
 		}
-		None => {
-			child.kill().unwrap();
-			(ExecutionResult { time_seconds: *timeout as f64, memory_kilobytes: Some(memory_kilobytes) }, Err(TimedOut))
-		}
-	};
+
+		return (ExecutionResult { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, Err(RuntimeError(format!    ("- the process was terminated with the following error:\n{}", status.to_string()))))
+	}
+	if status.code().unwrap() != 0 {
+		return (ExecutionResult { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, Err(Sio2jailError(format!("Sio2jail returned an invalid status code: {}", status.code().unwrap()))) );
+	}
+
+	return (ExecutionResult { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, match sio2jail_status {
+		"OK" => Ok(()),
+		"RE" | "RV" => Err(RuntimeError(if error_message.is_none() { String::new() } else { format!("- {}", error_message.unwrap()) })),
+		"TLE" => Err(TimedOut),
+		"MLE" => Err(RanOutOfMemory),
+		"OLE" => Err(RuntimeError(format!("- output limit exceeded"))),
+		_ => Err(Sio2jailError(format!("Sio2jail returned an invalid status in the output: {}", sio2jail_status)))
+	});
 }
 
 pub fn run_test(
