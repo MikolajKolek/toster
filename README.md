@@ -25,7 +25,7 @@ Options:
       --io <IO>
           The input and output directory (sets both -i and -o at once)
   -t, --timeout <TIMEOUT>
-          The number of seconds after which a test or generation times out if the program does not return [default: 5]
+          The number of seconds after which a test or generation times out if the program does not return. WARNING: if you're using the sio2jail flag, this timeout will still work based on time measured directly by toster, not time measured by sio2jail [default: 5]
       --compile-timeout <COMPILE_TIMEOUT>
           The number of seconds after which compilation times out if it doesn't finish [default: 10]
   -c, --compile-command <COMPILE_COMMAND>

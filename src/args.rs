@@ -24,6 +24,12 @@ pub struct Args {
 	pub io: Option<String>,
 
 	/// The number of seconds after which a test or generation times out if the program does not return
+	#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+	#[clap(short, long, value_parser, default_value = "5")]
+	pub timeout: u64,
+
+	/// The number of seconds after which a test or generation times out if the program does not return. WARNING: if you're using the sio2jail flag, this timeout will still work based on time measured directly by toster, not time measured by sio2jail
+	#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 	#[clap(short, long, value_parser, default_value = "5")]
 	pub timeout: u64,
 
