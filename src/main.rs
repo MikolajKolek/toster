@@ -184,12 +184,12 @@ fn main() {
 		memory_limit = args.memory_limit.unwrap_or(0);
 	}
 
+	if memory_limit != 0 && !sio2jail {
+		sio2jail = true;
+	}
 	if sio2jail && args.generate {
 		println!("{}", "You can't have the --generate and --sio2jail flags on at the same time.".red());
 		return;
-	}
-	if memory_limit != 0 && !sio2jail {
-		sio2jail = true;
 	}
 	if sio2jail && memory_limit == 0 {
 		memory_limit = 1048576;
