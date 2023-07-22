@@ -6,7 +6,7 @@ homepage = "https://github.com/MikolajKolek/toster"
 authors = ["Mikołaj Kołek"]
 readme = "README.md"
 license = "MIT"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 build = "build.rs"
 
