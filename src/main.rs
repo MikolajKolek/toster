@@ -2,11 +2,10 @@ mod args;
 mod test_result;
 mod testing_utils;
 
-use std::{fs, panic, process, thread};
+use std::{fs, process, thread};
 use std::cmp::Ordering;
 use std::fmt::Write as FmtWrite;
 use std::fs::{File, read_dir};
-use std::panic::PanicInfo;
 use std::path::Path;
 use std::sync::{Arc, atomic, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
@@ -14,7 +13,7 @@ use std::time::{Duration, Instant};
 use atomic_counter::{AtomicCounter, RelaxedCounter};
 use clap::Parser;
 use colored::Colorize;
-use human_panic::{handle_dump, Metadata, print_msg};
+use human_panic::setup_panic;
 use indicatif::{ParallelProgressIterator, ProgressState, ProgressStyle};
 use is_executable::is_executable;
 use lazy_static::lazy_static;
@@ -46,28 +45,6 @@ static TIME_BEFORE_TESTING: OnceCell<Instant> = OnceCell::new();
 static TEST_COUNT: AtomicUsize = AtomicUsize::new(0);
 static GENERATE: AtomicBool = AtomicBool::new(false);
 static RECEIVED_CTRL_C: AtomicBool = AtomicBool::new(false);
-
-// For whatever reason, the setup_panic!() macro doesn't seem to work, so I just made it a function
-fn setup_panic() {
-	match std::env::var("RUST_BACKTRACE") {
-		Err(_) => {
-			let meta = Metadata {
-				version: env!("CARGO_PKG_VERSION").into(),
-				name: env!("CARGO_PKG_NAME").into(),
-				authors: env!("CARGO_PKG_AUTHORS").replace(":", ", ").into(),
-				homepage: env!("CARGO_PKG_HOMEPAGE").into(),
-			};
-
-			panic::set_hook(Box::new(move |info: &PanicInfo| {
-				let file_path = handle_dump(&meta, info);
-				print_msg(file_path, &meta)
-					.expect("human-panic: printing error message to console failed");
-				process::exit(-1)
-			}));
-		}
-		Ok(_) => {}
-	}
-}
 
 fn format_error_counts() -> String {
 	[
@@ -150,7 +127,7 @@ fn print_output(stopped_early: bool) {
 }
 
 fn main() {
-	setup_panic();
+	setup_panic!();
 	ctrlc::set_handler(move || {
 		RECEIVED_CTRL_C.store(true, atomic::Ordering::Release);
 		print_output(true)
@@ -286,7 +263,7 @@ fn main() {
 		let (test_result, _) = run_test(&true_location.unwrap().to_str().expect("The executable for the \"true\" command has an invalid path").to_string(), test_input_path, &output_dir, &random_test_name, &args.out_ext, &tempdir, &(1 as u64), true, 0);
 		match test_result {
 			Error { error: ExecutionError::Sio2jailError(error), .. } => {
-				if error == "Exception occurred: System error occurred: perf event open failed: Permission denied: error 13: Permission denied\n" {
+				if error == "Exception occurred: System error occured: perf event open failed: Permission denied: error 13: Permission denied\n" {
 					println!("{}", "You need to run the following command to use toster with sio2jail. You may also put this option in your /etc/sysctl.conf. This will make the setting persist across reboots.".red());
 					println!("{}", "sudo sysctl -w kernel.perf_event_paranoid=-1".bright_black().italic());
 				}
