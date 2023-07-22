@@ -25,7 +25,7 @@ pub enum TestResult {
 #[allow(unused)]
 pub enum ExecutionError {
 	TimedOut,
-	RanOutOfMemory,
+	MemoryLimitExceeded,
 	RuntimeError(String),
 	Sio2jailError(String)
 }
@@ -74,7 +74,7 @@ impl ExecutionError {
 	pub fn to_string(&self) -> String {
 		return match self {
 			ExecutionError::TimedOut => "Timed out".to_string(),
-			ExecutionError::RanOutOfMemory => "Memory limit exceeded".to_string(),
+			ExecutionError::MemoryLimitExceeded => "Memory limit exceeded".to_string(),
 			ExecutionError::RuntimeError(error) => format!("Runtime error {}", error),
 			ExecutionError::Sio2jailError(error) => format!("Sio2jail error: {}", error),
 		};

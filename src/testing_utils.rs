@@ -24,7 +24,7 @@ use crate::{Correct, Error, Incorrect, TestResult};
 use crate::test_result::{ExecutionError, ExecutionResult};
 use crate::test_result::ExecutionError::{RuntimeError, TimedOut};
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-use crate::test_result::ExecutionError::{RanOutOfMemory, Sio2jailError};
+use crate::test_result::ExecutionError::{MemoryLimitExceeded, Sio2jailError};
 use crate::TestResult::NoOutputFile;
 
 pub fn get_sio2jail() -> String {
@@ -176,7 +176,7 @@ pub fn generate_output_sio2jail(
 	let error_output = fs::read_to_string(error_file_path).expect("Couldn't read sio2jail error output");
 	if !error_output.is_empty() {
 		return if error_output == "terminate called after throwing an instance of 'std::bad_alloc'\n  what():  std::bad_alloc\n" {
-			(ExecutionResult { time_seconds: 0 as f64, memory_kilobytes: Some(*memory_limit as i64) }, Err(RanOutOfMemory))
+			(ExecutionResult { time_seconds: 0 as f64, memory_kilobytes: Some(*memory_limit as i64) }, Err(MemoryLimitExceeded))
 		} else {
 			(ExecutionResult { time_seconds: 0 as f64, memory_kilobytes: None }, Err(Sio2jailError(error_output)))
 		}
@@ -209,7 +209,7 @@ pub fn generate_output_sio2jail(
 		"OK" => Ok(()),
 		"RE" | "RV" => Err(RuntimeError(if error_message.is_none() { String::new() } else { format!("- {}", error_message.unwrap()) })),
 		"TLE" => Err(TimedOut),
-		"MLE" => Err(RanOutOfMemory),
+		"MLE" => Err(MemoryLimitExceeded),
 		"OLE" => Err(RuntimeError(format!("- output limit exceeded"))),
 		_ => Err(Sio2jailError(format!("Sio2jail returned an invalid status in the output: {}", sio2jail_status)))
 	});

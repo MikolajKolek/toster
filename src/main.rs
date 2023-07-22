@@ -31,10 +31,10 @@ lazy_static! {
     static ref SUCCESS_COUNT: RelaxedCounter = RelaxedCounter::new(0);
 	static ref INCORRECT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
     static ref TIMED_OUT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
-    static ref OUT_OF_MEMORY: RelaxedCounter = RelaxedCounter::new(0);
-    static ref RUNTIME_ERROR: RelaxedCounter = RelaxedCounter::new(0);
-    static ref NO_OUTPUT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
-	static ref SIO2JAIL_ERROR: RelaxedCounter = RelaxedCounter::new(0);
+    static ref MEMORY_LIMIT_EXCEEDED_COUNT: RelaxedCounter = RelaxedCounter::new(0);
+    static ref RUNTIME_ERROR_COUNT: RelaxedCounter = RelaxedCounter::new(0);
+    static ref NO_OUTPUT_FILE_COUNT: RelaxedCounter = RelaxedCounter::new(0);
+	static ref SIO2JAIL_ERROR_COUNT: RelaxedCounter = RelaxedCounter::new(0);
 
     static ref SLOWEST_TEST: Arc<Mutex<(f64, String)>> = Arc::new(Mutex::new((-1 as f64, String::new())));
     static ref MOST_MEMORY_USED: Arc<Mutex<(i64, String)>> = Arc::new(Mutex::new((-1, String::new())));
@@ -44,6 +44,7 @@ lazy_static! {
 static TIME_BEFORE_TESTING: OnceLock<Instant> = OnceLock::new();
 static TEST_COUNT: AtomicUsize = AtomicUsize::new(0);
 static GENERATE: AtomicBool = AtomicBool::new(false);
+
 static RECEIVED_CTRL_C: AtomicBool = AtomicBool::new(false);
 static PANICKING: AtomicBool = AtomicBool::new(false);
 
@@ -51,10 +52,10 @@ fn format_error_counts() -> String {
 	[
 		(INCORRECT_COUNT.get(), if INCORRECT_COUNT.get() > 1 { "wrong answers" } else { "wrong answer" }, ),
 		(TIMED_OUT_COUNT.get(), "timed out"),
-		(OUT_OF_MEMORY.get(), "out of memory"),
-		(RUNTIME_ERROR.get(), if RUNTIME_ERROR.get() > 1 { "runtime errors" } else { "runtime error" }),
-		(NO_OUTPUT_COUNT.get(), if NO_OUTPUT_COUNT.get() > 1 { "without output files" } else { "without output file" }),
-		(SIO2JAIL_ERROR.get(), if SIO2JAIL_ERROR.get() > 1 { "sio2jail errors" } else { "sio2jail error" })
+		(MEMORY_LIMIT_EXCEEDED_COUNT.get(), "out of memory"),
+		(RUNTIME_ERROR_COUNT.get(), if RUNTIME_ERROR_COUNT.get() > 1 { "runtime errors" } else { "runtime error" }),
+		(NO_OUTPUT_FILE_COUNT.get(), if NO_OUTPUT_FILE_COUNT.get() > 1 { "without output files" } else { "without output file" }),
+		(SIO2JAIL_ERROR_COUNT.get(), if SIO2JAIL_ERROR_COUNT.get() > 1 { "sio2jail errors" } else { "sio2jail error" })
 	]
 		.into_iter()
 		.filter(|(count, _)| count > &0)
@@ -72,7 +73,7 @@ fn print_output(stopped_early: bool) {
 	let most_memory_mutex = most_memory_clone.lock().expect("Failed to acquire mutex!");
 
 	let testing_time = TIME_BEFORE_TESTING.get().expect("Time before testing not initialized!").elapsed().as_secs_f64();
-	let tested_count = SUCCESS_COUNT.get() + TIMED_OUT_COUNT.get() + INCORRECT_COUNT.get() + OUT_OF_MEMORY.get() + RUNTIME_ERROR.get() + NO_OUTPUT_COUNT.get() + SIO2JAIL_ERROR.get();
+	let tested_count = SUCCESS_COUNT.get() + TIMED_OUT_COUNT.get() + INCORRECT_COUNT.get() + MEMORY_LIMIT_EXCEEDED_COUNT.get() + RUNTIME_ERROR_COUNT.get() + NO_OUTPUT_FILE_COUNT.get() + SIO2JAIL_ERROR_COUNT.get();
 	let not_tested_count = &TEST_COUNT.load(atomic::Ordering::Acquire) - tested_count;
 
 	let error_counts = format_error_counts();
@@ -331,8 +332,8 @@ fn main() {
 					Err(error) => {
 						match error {
 							ExecutionError::TimedOut => { TIMED_OUT_COUNT.inc(); }
-							ExecutionError::RanOutOfMemory => { OUT_OF_MEMORY.inc(); }
-							ExecutionError::RuntimeError(_) => { RUNTIME_ERROR.inc(); }
+							ExecutionError::MemoryLimitExceeded => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
+							ExecutionError::RuntimeError(_) => { RUNTIME_ERROR_COUNT.inc(); }
 							ExecutionError::Sio2jailError(_) => {}
 						}
 						let clone = Arc::clone(&ERRORS);
@@ -355,11 +356,11 @@ fn main() {
 				match test_result {
 					Correct { .. } => { SUCCESS_COUNT.inc(); }
 					Incorrect { .. } => { INCORRECT_COUNT.inc(); }
-					Error { error: ExecutionError::RanOutOfMemory, .. } => { OUT_OF_MEMORY.inc(); }
+					Error { error: ExecutionError::MemoryLimitExceeded, .. } => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
 					Error { error: ExecutionError::TimedOut, .. } => { TIMED_OUT_COUNT.inc(); }
-					Error { error: ExecutionError::RuntimeError(_), .. } => { RUNTIME_ERROR.inc(); }
-					Error { error: ExecutionError::Sio2jailError(_), .. } => { SIO2JAIL_ERROR.inc(); }
-					NoOutputFile { .. } => { NO_OUTPUT_COUNT.inc(); }
+					Error { error: ExecutionError::RuntimeError(_), .. } => { RUNTIME_ERROR_COUNT.inc(); }
+					Error { error: ExecutionError::Sio2jailError(_), .. } => { SIO2JAIL_ERROR_COUNT.inc(); }
+					NoOutputFile { .. } => { NO_OUTPUT_FILE_COUNT.inc(); }
 				}
 
 				if !test_result.is_correct() {
