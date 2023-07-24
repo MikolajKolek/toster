@@ -40,13 +40,13 @@ impl TestResult {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
 				result.push_str(diff);
 			}
-			TestResult::NoOutputFile { test_name } => {
-				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
-				result.push_str(&format!("{}", "Output file does not exist".red()));
-			}
 			TestResult::Error { test_name, error } => {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
 				result.push_str(&format!("{}", error.to_string().red()));
+			}
+			TestResult::NoOutputFile { test_name } => {
+				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
+				result.push_str(&format!("{}", "Output file does not exist".red()));
 			}
 		}
 

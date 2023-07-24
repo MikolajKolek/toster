@@ -8,6 +8,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 #[cfg(all(unix))]
 use std::thread;
 use std::time::{Duration, Instant};
@@ -16,7 +17,9 @@ use comfy_table::{Attribute, Cell, Color, Table};
 use comfy_table::ContentArrangement::Dynamic;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use command_fds::{CommandFdExt, FdMapping};
+use crossbeam_queue::ArrayQueue;
 use directories::BaseDirs;
+use once_cell::sync::Lazy;
 use tempfile::TempDir;
 use terminal_size::{Height, Width};
 use wait_timeout::ChildExt;
@@ -27,31 +30,42 @@ use crate::test_result::ExecutionError::{RuntimeError, TimedOut};
 use crate::test_result::ExecutionError::{MemoryLimitExceeded, Sio2jailError};
 use crate::TestResult::NoOutputFile;
 
-pub fn get_sio2jail() -> String {
+static SIO2JAIL_PATH: OnceLock<String> = OnceLock::new();
+static TEMPFILE_POOL: Lazy<ArrayQueue<PathBuf>> = Lazy::new(|| { ArrayQueue::new(num_cpus::get() * 10) });
+
+pub fn fill_tempfile_pool(tempdir: &TempDir) {
+	for i in 0..(num_cpus::get() * 10) {
+		let file_path = tempdir.path().join(format!("tempfile-{}", i));
+		TEMPFILE_POOL.push(file_path).expect("Couldn't push into tempfile pool");
+	}
+}
+
+pub fn init_sio2jail() -> bool {
 	let base_dirs = BaseDirs::new();
 	if base_dirs.is_none() {
 		println!("{}", "No valid home directory path could be retrieved from the operating system. Sio2jail could not be found".red());
-		return String::new();
+		return false;
 	}
 	let binding = base_dirs.unwrap();
 	let executable_dir = binding.executable_dir();
 	if executable_dir.is_none() {
 		println!("{}", "Couldn't locate the user's executable directory. Sio2jail could not be found".red());
-		return String::new();
+		return false;
 	}
 	let executable_dir_str = executable_dir.unwrap().to_str();
 	if executable_dir_str.is_none() {
 		println!("{}", "The user's executable directory is invalid. Sio2jail could not be found".red());
-		return String::new();
+		return false;
 	}
 
 	let result = format!("{}/sio2jail", executable_dir_str.unwrap());
 	if !Path::new(&result).exists() {
 		println!("{}{}", "Sio2jail could not be found at ".red(), result.red());
-		return String::new();
+		return false;
 	}
 
-	return result;
+	SIO2JAIL_PATH.get_or_init(|| { return result; });
+	return true;
 }
 
 pub fn compile_cpp(
@@ -63,14 +77,13 @@ pub fn compile_cpp(
 	let executable_file_base = source_code_file.file_stem().expect("The provided filename is invalid!");
 	let executable_file = tempdir.path().join(format!("{}.o", executable_file_base.to_str().expect("The provided filename is invalid!"))).to_str().expect("The provided filename is invalid!").to_string();
 
-	let compilation_result_path = tempdir.path().join(format!("{}.out", executable_file_base.to_str().expect("The provided filename is invalid!")));
-	let compilation_result_file = File::create(&compilation_result_path).expect("Failed to create temporary file!");
-
 	let cmd = compile_command
 		.replace("<IN>", source_code_file.to_str().expect("The provided filename is invalid!"))
 		.replace("<OUT>", &executable_file);
 	let mut split_cmd = cmd.split(" ");
 
+	let compilation_result_path = tempdir.path().join(format!("{}.out", executable_file_base.to_str().expect("The provided filename is invalid!")));
+	let compilation_result_file = File::create(&compilation_result_path).expect("Failed to create temporary file!");
 	let time_before_compilation = Instant::now();
 	let command = Command::new(&split_cmd.nth(0).expect("The compile command is invalid!"))
 		.args(split_cmd.collect::<Vec<&str>>())
@@ -147,19 +160,16 @@ pub fn generate_output_sio2jail(
 	output_file: File,
 	timeout: &u64,
 	memory_limit: &u64,
-	tempdir: &TempDir,
-	test_name: &String
+	sio2jail_output_file_path: &PathBuf,
+	sio2jail_output_file: File,
+	error_file_path: &PathBuf,
+	error_file: File
 ) -> (ExecutionResult, Result<(), ExecutionError>) {
-	let sio2jail_output_file_path = tempdir.path().join(format!("{}-sio2jail-out", test_name));
-	let sio2jail_output_file = File::create(&sio2jail_output_file_path).expect("Failed to create temporary file!");
-	let error_file_path = tempdir.path().join(format!("{}-sio2jail-error", test_name));
-	let error_file = File::create(&error_file_path).expect("Failed to create temporary file!");
-
-	let mut child = Command::new(get_sio2jail())
+	let mut child = Command::new(SIO2JAIL_PATH.get().expect("Sio2jail was not properly initialized!"))
 		.args(["-f", "3", "-o", "oiaug", "--mount-namespace", "off", "--pid-namespace", "off", "--uts-namespace", "off", "--ipc-namespace", "off", "--net-namespace", "off", "--capability-drop", "off", "--user-namespace", "off", "-s", "-m", &memory_limit.to_string(), "--", executable_path ])
 		.fd_mappings(vec![FdMapping {
 			parent_fd: sio2jail_output_file.as_raw_fd(),
-			child_fd: 3,
+			child_fd: 3
 		}]).expect("Failed to redirect file descriptor 3!")
 		.stdout(output_file)
 		.stdin(input_file)
@@ -221,7 +231,6 @@ pub fn run_test(
 	output_dir: &String,
 	test_name: &String,
 	out_extension: &String,
-	tempdir: &TempDir,
 	timeout: &u64,
 	_use_sio2jail: bool,
 	_memory_limit: u64,
@@ -232,12 +241,22 @@ pub fn run_test(
 	if !Path::new(&correct_output_file_path).is_file() {
 		return (NoOutputFile {test_name: test_name.clone()}, ExecutionResult { time_seconds: 0 as f64, memory_kilobytes: None });
 	}
-	let test_output_file_path = tempdir.path().join(format!("{}.out", test_name));
+	let test_output_file_path = TEMPFILE_POOL.pop().expect("Couldn't acquire tempfile!");
 	let test_output_file = File::create(&test_output_file_path).expect("Failed to create temporary file!");
 
 	#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 	let (execution_result, execution_error) = if _use_sio2jail {
-		generate_output_sio2jail(executable_path, input_file, test_output_file, timeout, &_memory_limit, tempdir, test_name)
+		let sio2jail_output_file_path = TEMPFILE_POOL.pop().expect("Couldn't acquire tempfile!");
+		let sio2jail_output_file = File::create(&sio2jail_output_file_path).expect("Failed to create temporary file!");
+		let error_file_path = TEMPFILE_POOL.pop().expect("Couldn't acquire tempfile!");
+		let error_file = File::create(&error_file_path).expect("Failed to create temporary file!");
+
+		let result = generate_output_sio2jail(executable_path, input_file, test_output_file, timeout, &_memory_limit, &sio2jail_output_file_path, sio2jail_output_file, &error_file_path, error_file);
+
+		TEMPFILE_POOL.push(sio2jail_output_file_path).expect("Couldn't push into tempfile pool");
+		TEMPFILE_POOL.push(error_file_path).expect("Couldn't push into tempfile pool");
+
+		result
 	} else {
 		generate_output_default(executable_path, input_file, test_output_file, timeout)
 	};
@@ -251,10 +270,12 @@ pub fn run_test(
 
 	let test_output: String = fs::read_to_string(&test_output_file_path).expect("Failed to read temporary file!");
 	let correct_output = fs::read_to_string(Path::new(&correct_output_file_path)).expect("Failed to read output file!");
-	return if test_output.split_whitespace().collect::<Vec<&str>>() != correct_output.split_whitespace().collect::<Vec<&str>>() {
-		(Incorrect { test_name: test_name.clone(), diff: generate_diff(correct_output, test_output) }, execution_result)
-	} else {
+	let is_correct = test_output.split_whitespace().collect::<Vec<&str>>() == correct_output.split_whitespace().collect::<Vec<&str>>();
+	TEMPFILE_POOL.push(test_output_file_path).expect("Couldn't push into tempfile pool");
+	return if is_correct {
 		(Correct { test_name: test_name.clone() }, execution_result)
+	} else {
+		(Incorrect { test_name: test_name.clone(), diff: generate_diff(correct_output, test_output) }, execution_result)
 	}
 }
 
