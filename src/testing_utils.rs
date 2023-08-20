@@ -264,6 +264,8 @@ pub fn run_test(
 	let (execution_result, execution_error) = generate_output_default(executable_path, input_file, test_output_file, timeout);
 
 	if execution_error.is_err() {
+		TEMPFILE_POOL.push(test_output_file_path).expect("Couldn't push into tempfile pool");
+
 		let result = execution_error.unwrap_err();
 		return (Error { test_name: test_name.clone(), error: result }, execution_result);
 	}
