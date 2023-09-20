@@ -38,7 +38,7 @@ pub struct Args {
 	pub compile_timeout: u64,
 
 	/// The command used to compile the file. <IN> gets replaced with the path to the source code file, <OUT> is the executable output location.
-	#[clap(short, long, value_parser, default_value = "g++ -std=c++17 -O3 -static <IN> -o <OUT>")]
+	#[clap(short, long, value_parser, default_value = "g++ -std=c++20 -O3 -static <IN> -o <OUT>")]
 	pub compile_command: String,
 
 	/// Makes toster use sio2jail for measuring program runtime and memory use more accurately. By default limits memory use to 1 GiB. WARNING: enabling this flag can significantly slow down testing

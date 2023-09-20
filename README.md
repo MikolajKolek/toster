@@ -29,7 +29,7 @@ Options:
       --compile-timeout <COMPILE_TIMEOUT>
           The number of seconds after which compilation times out if it doesn't finish [default: 10]
   -c, --compile-command <COMPILE_COMMAND>
-          The command used to compile the file. <IN> gets replaced with the path to the source code file, <OUT> is the executable output location [default: "g++ -std=c++17 -O3 -static <IN> -o <OUT>"]
+          The command used to compile the file. <IN> gets replaced with the path to the source code file, <OUT> is the executable output location [default: "g++ -std=c++20 -O3 -static <IN> -o <OUT>"]
   -s, --sio2jail
           Makes toster use sio2jail for measuring program runtime and memory use more accurately. By default limits memory use to 1 GiB. WARNING: enabling this flag can significantly slow down testing
   -m, --memory-limit <MEMORY_LIMIT>
@@ -43,7 +43,9 @@ Options:
 ```
 
 # Compiler
-If you're using the sio2jail feature and want to make sure that your toster measurements are exactly identical to those of sio2 on a contest, you need to make sure that you're using the same compiler version as the one used in sio2. The compiler used in the [Polish Olympiad in Informatics](https://www.oi.edu.pl/) is G++ 10.2 (as detailed [here](https://www.oi.edu.pl/l/30oi_ustalenia_techniczne/)). If you want to install G++ 10.2, you can do so by building it from scratch (for example using [this](https://github.com/darrenjs/howto/blob/master/build_scripts/build_gcc_10.sh) script, only changing the version), or you can download a prebuilt version that I made [here](https://mikolajkolek.com/gcc-10.2).
+If you're using the sio2jail feature and want to make sure that your toster measurements are exactly identical to those of sio2 on a contest, you need to make sure that you're using the same compiler version as the one used in sio. The compiler used in the [Polish Olympiad in Informatics](https://www.oi.edu.pl/) as of XXXI OI is G++ 12.2 (as detailed [here](https://www.oi.edu.pl/l/31oi_ustalenia_techniczne/)). If you want to install G++ 12.2, you can do so by building it from scratch (for example using [this](https://github.com/darrenjs/howto/blob/master/build_scripts/build_gcc_10.sh) script, only changing the version). You can also download prebuilt G++ versions made by me from here:
+- [G++ 10.2](https://mikolajkolek.com/gcc-10.2)
+- [G++ 12.2](https://mikolajkolek.com/gcc-12.2)
 
 # License
 Toster is licensed under the [MIT Licence](https://github.com/MikolajKolek/toster/blob/master/LICENSE)
