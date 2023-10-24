@@ -4,6 +4,7 @@ mod testing_utils;
 
 use std::{fs, panic, process, thread};
 use std::cmp::Ordering;
+use std::ffi::OsStr;
 use std::fmt::Write as FmtWrite;
 use std::fs::{File, read_dir};
 use std::panic::PanicInfo;
@@ -238,7 +239,7 @@ fn main() {
 	}
 
 	// Compiling
-	let extension = Path::new(&args.filename).extension().expect("Couldn't get the extension of the provided file").to_str().expect("Couldn't get the extension of the provided file");
+	let extension = Path::new(&args.filename).extension().unwrap_or(OsStr::new("")).to_str().expect("Couldn't get the extension of the provided file");
 	let executable: String;
 	if !is_executable(&args.filename) || (wsl::is_wsl() && (extension == "cpp" || extension == "cc" || extension == "cxx" || extension == "c")) {
 		match compile_cpp(Path::new(&args.filename).to_path_buf(), &tempdir, args.compile_timeout, &args.compile_command) {
