@@ -319,5 +319,5 @@ fn generate_diff(correct_answer: String, incorrect_answer: String) -> String {
 		}
 	}
 
-	return table.to_string();
+	return table.to_string().replace("\r", "");
 }
