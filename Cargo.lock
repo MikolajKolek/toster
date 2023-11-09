@@ -909,7 +909,6 @@ dependencies = [
  "terminal_size",
  "wait-timeout",
  "which",
- "wsl",
 ]
 
 [[package]]
@@ -1129,9 +1128,3 @@ checksum = "7c2e3184b9c4e92ad5167ca73039d0c42476302ab603e2fec4487511f38ccefc"
 dependencies = [
  "memchr",
 ]
-
-[[package]]
-name = "wsl"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8dab7ac864710bdea6594becbea5b5050333cf34fefb0dc319567eb347950d4"

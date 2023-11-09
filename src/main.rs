@@ -9,6 +9,7 @@ use std::fmt::Write as FmtWrite;
 use std::fs::{File, read_dir};
 use std::panic::PanicInfo;
 use std::path::Path;
+use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::atomic::Ordering::{Acquire, Release};
@@ -241,7 +242,7 @@ fn main() {
 	// Compiling
 	let extension = Path::new(&args.filename).extension().unwrap_or(OsStr::new("")).to_str().expect("Couldn't get the extension of the provided file");
 	let executable: String;
-	if !is_executable(&args.filename) || (wsl::is_wsl() && (extension == "cpp" || extension == "cc" || extension == "cxx" || extension == "c")) {
+	if !is_executable(&args.filename) || (extension == "cpp" || extension == "cc" || extension == "cxx" || extension == "c") {
 		match compile_cpp(Path::new(&args.filename).to_path_buf(), &tempdir, args.compile_timeout, &args.compile_command) {
 			Ok(result) => { executable = result }
 			Err(error) => {
@@ -254,6 +255,12 @@ fn main() {
 	else {
 		executable = tempdir.path().join(format!("{}.o", Path::new(&args.filename).file_name().expect("The provided filename is invalid!").to_str().expect("The provided filename is invalid!"))).to_str().expect("The provided filename is invalid!").to_string();
 		fs::copy(&args.filename, &executable).expect("The provided filename is invalid!");
+
+		let child = Command::new(&executable).spawn();
+		if child.is_err() {
+			println!("{}", "The provided file can't be executed!".red());
+			return;
+		}
 	}
 
 	// Progress bar styling
