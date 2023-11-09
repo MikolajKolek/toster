@@ -34,6 +34,7 @@ lazy_static! {
     static ref SUCCESS_COUNT: RelaxedCounter = RelaxedCounter::new(0);
 	static ref INCORRECT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
     static ref TIMED_OUT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
+	static ref INVALID_OUTPUT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
     static ref MEMORY_LIMIT_EXCEEDED_COUNT: RelaxedCounter = RelaxedCounter::new(0);
     static ref RUNTIME_ERROR_COUNT: RelaxedCounter = RelaxedCounter::new(0);
     static ref NO_OUTPUT_FILE_COUNT: RelaxedCounter = RelaxedCounter::new(0);
@@ -55,6 +56,7 @@ fn format_error_counts() -> String {
 	[
 		(INCORRECT_COUNT.get(), if INCORRECT_COUNT.get() > 1 { "wrong answers" } else { "wrong answer" }, ),
 		(TIMED_OUT_COUNT.get(), "timed out"),
+		(INVALID_OUTPUT_COUNT.get(), if INVALID_OUTPUT_COUNT.get() > 1 { "invalid outputs" } else { "invalid output" }),
 		(MEMORY_LIMIT_EXCEEDED_COUNT.get(), "out of memory"),
 		(RUNTIME_ERROR_COUNT.get(), if RUNTIME_ERROR_COUNT.get() > 1 { "runtime errors" } else { "runtime error" }),
 		(NO_OUTPUT_FILE_COUNT.get(), if NO_OUTPUT_FILE_COUNT.get() > 1 { "without output files" } else { "without output file" }),
@@ -81,7 +83,7 @@ fn print_output(stopped_early: bool) {
 	}
 
 	let testing_time = TIME_BEFORE_TESTING.get().unwrap().elapsed().as_secs_f64();
-	let tested_count = SUCCESS_COUNT.get() + TIMED_OUT_COUNT.get() + INCORRECT_COUNT.get() + MEMORY_LIMIT_EXCEEDED_COUNT.get() + RUNTIME_ERROR_COUNT.get() + NO_OUTPUT_FILE_COUNT.get() + SIO2JAIL_ERROR_COUNT.get();
+	let tested_count = SUCCESS_COUNT.get() + TIMED_OUT_COUNT.get() + INCORRECT_COUNT.get() + MEMORY_LIMIT_EXCEEDED_COUNT.get() + INVALID_OUTPUT_COUNT.get() + RUNTIME_ERROR_COUNT.get() + NO_OUTPUT_FILE_COUNT.get() + SIO2JAIL_ERROR_COUNT.get();
 	let not_tested_count = &TEST_COUNT.load(Acquire) - tested_count;
 
 	let error_counts = format_error_counts();
@@ -351,7 +353,8 @@ fn main() {
 					}
 					Err(error) => {
 						match error {
-							ExecutionError::TimedOut => { TIMED_OUT_COUNT.inc(); }
+							ExecutionError::TimedOut => { TIMED_OUT_COUNT.inc(); },
+							ExecutionError::InvalidOutput => { INVALID_OUTPUT_COUNT.inc(); }
 							ExecutionError::MemoryLimitExceeded => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
 							ExecutionError::RuntimeError(_) => { RUNTIME_ERROR_COUNT.inc(); }
 							ExecutionError::Sio2jailError(_) => { SIO2JAIL_ERROR_COUNT.inc(); }
@@ -376,8 +379,9 @@ fn main() {
 				match test_result {
 					Correct { .. } => { SUCCESS_COUNT.inc(); }
 					Incorrect { .. } => { INCORRECT_COUNT.inc(); }
-					Error { error: ExecutionError::MemoryLimitExceeded, .. } => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
 					Error { error: ExecutionError::TimedOut, .. } => { TIMED_OUT_COUNT.inc(); }
+					Error { error: ExecutionError::InvalidOutput, .. } => { INVALID_OUTPUT_COUNT.inc(); }
+					Error { error: ExecutionError::MemoryLimitExceeded, .. } => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
 					Error { error: ExecutionError::RuntimeError(_), .. } => { RUNTIME_ERROR_COUNT.inc(); }
 					Error { error: ExecutionError::Sio2jailError(_), .. } => { SIO2JAIL_ERROR_COUNT.inc(); }
 					NoOutputFile { .. } => { NO_OUTPUT_FILE_COUNT.inc(); }

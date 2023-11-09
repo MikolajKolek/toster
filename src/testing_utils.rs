@@ -25,7 +25,7 @@ use terminal_size::{Height, Width};
 use wait_timeout::ChildExt;
 use crate::{Correct, Error, Incorrect, TestResult};
 use crate::test_result::{ExecutionError, ExecutionResult};
-use crate::test_result::ExecutionError::{RuntimeError, TimedOut};
+use crate::test_result::ExecutionError::{InvalidOutput, RuntimeError, TimedOut};
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use crate::test_result::ExecutionError::{MemoryLimitExceeded, Sio2jailError};
 use crate::TestResult::NoOutputFile;
@@ -270,7 +270,12 @@ pub fn run_test(
 		return (Error { test_name: test_name.clone(), error: result }, execution_result);
 	}
 
-	let test_output: String = fs::read_to_string(&test_output_file_path).expect("Failed to read temporary file!");
+	let test_output = fs::read_to_string(&test_output_file_path);
+	if test_output.is_err() {
+		TEMPFILE_POOL.push(test_output_file_path).expect("Couldn't push into tempfile pool");
+		return (Error { test_name: test_name.clone(), error: InvalidOutput }, execution_result);
+	}
+	let test_output= test_output.unwrap();
 	let correct_output = fs::read_to_string(Path::new(&correct_output_file_path)).expect("Failed to read output file!");
 	let is_correct = test_output.split_whitespace().collect::<Vec<&str>>() == correct_output.split_whitespace().collect::<Vec<&str>>();
 	TEMPFILE_POOL.push(test_output_file_path).expect("Couldn't push into tempfile pool");
