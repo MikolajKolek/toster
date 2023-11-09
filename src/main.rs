@@ -353,7 +353,7 @@ fn main() {
 					}
 					Err(error) => {
 						match error {
-							ExecutionError::TimedOut => { TIMED_OUT_COUNT.inc(); },
+							ExecutionError::TimedOut => { TIMED_OUT_COUNT.inc(); }
 							ExecutionError::InvalidOutput => { INVALID_OUTPUT_COUNT.inc(); }
 							ExecutionError::MemoryLimitExceeded => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
 							ExecutionError::RuntimeError(_) => { RUNTIME_ERROR_COUNT.inc(); }
