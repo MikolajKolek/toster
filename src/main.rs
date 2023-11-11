@@ -27,8 +27,9 @@ use tempfile::tempdir;
 use which::which;
 use args::Args;
 use crate::test_result::{ExecutionError, TestResult};
+use crate::test_result::TestResult::CheckerError;
 use crate::testing_utils::{compile_cpp, fill_tempfile_pool, generate_output_default, init_sio2jail, run_test};
-use crate::TestResult::{Correct, Error, Incorrect, NoOutputFile};
+use crate::TestResult::{Correct, ProgramError, Incorrect, NoOutputFile};
 
 lazy_static! {
     static ref SUCCESS_COUNT: RelaxedCounter = RelaxedCounter::new(0);
@@ -37,8 +38,9 @@ lazy_static! {
 	static ref INVALID_OUTPUT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
     static ref MEMORY_LIMIT_EXCEEDED_COUNT: RelaxedCounter = RelaxedCounter::new(0);
     static ref RUNTIME_ERROR_COUNT: RelaxedCounter = RelaxedCounter::new(0);
-    static ref NO_OUTPUT_FILE_COUNT: RelaxedCounter = RelaxedCounter::new(0);
 	static ref SIO2JAIL_ERROR_COUNT: RelaxedCounter = RelaxedCounter::new(0);
+	static ref CHECKER_ERROR_COUNT: RelaxedCounter = RelaxedCounter::new(0);
+    static ref NO_OUTPUT_FILE_COUNT: RelaxedCounter = RelaxedCounter::new(0);
 
     static ref SLOWEST_TEST: Arc<Mutex<(f64, String)>> = Arc::new(Mutex::new((-1 as f64, String::new())));
     static ref MOST_MEMORY_USED: Arc<Mutex<(i64, String)>> = Arc::new(Mutex::new((-1, String::new())));
@@ -53,7 +55,7 @@ static RECEIVED_CTRL_C: AtomicBool = AtomicBool::new(false);
 static PANICKING: AtomicBool = AtomicBool::new(false);
 
 fn format_error_counts() -> String {
-	[
+	let mut res = [
 		(INCORRECT_COUNT.get(), if INCORRECT_COUNT.get() > 1 { "wrong answers" } else { "wrong answer" }, ),
 		(TIMED_OUT_COUNT.get(), "timed out"),
 		(INVALID_OUTPUT_COUNT.get(), if INVALID_OUTPUT_COUNT.get() > 1 { "invalid outputs" } else { "invalid output" }),
@@ -66,7 +68,17 @@ fn format_error_counts() -> String {
 		.filter(|(count, _)| count > &0)
 		.map(|(count, label)| format!("{} {}", count.to_string().red(), label.to_string().red()))
 		.collect::<Vec<String>>()
-		.join(", ")
+		.join(", ");
+
+	if CHECKER_ERROR_COUNT.get() > 0 {
+		res += &format!("{}{}{}",
+		                if res.is_empty() { "" } else { ", " },
+		                CHECKER_ERROR_COUNT.get().to_string().blue(),
+		                (if CHECKER_ERROR_COUNT.get() > 1 { " checker errors" } else { " checker error" }).blue()
+		);
+	}
+
+	res
 }
 
 fn print_output(stopped_early: bool) {
@@ -83,7 +95,7 @@ fn print_output(stopped_early: bool) {
 	}
 
 	let testing_time = TIME_BEFORE_TESTING.get().unwrap().elapsed().as_secs_f64();
-	let tested_count = SUCCESS_COUNT.get() + TIMED_OUT_COUNT.get() + INCORRECT_COUNT.get() + MEMORY_LIMIT_EXCEEDED_COUNT.get() + INVALID_OUTPUT_COUNT.get() + RUNTIME_ERROR_COUNT.get() + NO_OUTPUT_FILE_COUNT.get() + SIO2JAIL_ERROR_COUNT.get();
+	let tested_count = SUCCESS_COUNT.get() + TIMED_OUT_COUNT.get() + INCORRECT_COUNT.get() + MEMORY_LIMIT_EXCEEDED_COUNT.get() + INVALID_OUTPUT_COUNT.get() + RUNTIME_ERROR_COUNT.get() + NO_OUTPUT_FILE_COUNT.get() + SIO2JAIL_ERROR_COUNT.get() + CHECKER_ERROR_COUNT.get();
 	let not_tested_count = &TEST_COUNT.load(Acquire) - tested_count;
 
 	let error_counts = format_error_counts();
@@ -95,7 +107,7 @@ fn print_output(stopped_early: bool) {
 	}
 
 	let mut additional_info = String::new();
-	if slowest_test_mutex.0 != -1 as f64 {
+	if slowest_test_mutex.0 != -1f64 {
 		additional_info = format!(" (Slowest test: {} at {:.3}s{})",
 		                          slowest_test_mutex.1,
 		                          slowest_test_mutex.0,
@@ -197,6 +209,10 @@ fn main() {
 		println!("{}", "You can't have the --generate and --sio2jail flags on at the same time.".red());
 		return;
 	}
+	if args.checker.is_some() && args.generate {
+		println!("{}", "You can't have the --generate and --checker flags on at the same time.".red());
+		return;
+	}
 	if sio2jail && memory_limit == 0 {
 		memory_limit = 1048576;
 	}
@@ -213,7 +229,7 @@ fn main() {
 		println!("{}", "The input directory does not exist".red());
 		return;
 	}
-	if !Path::new(&output_dir).is_dir() {
+	if !Path::new(&output_dir).is_dir() && args.checker.is_none() {
 		if args.generate {
 			fs::create_dir(&output_dir).expect("Failed to create output directory!");
 		}
@@ -224,6 +240,10 @@ fn main() {
 	}
 	if !Path::new(&args.filename).is_file() {
 		println!("{}", "The provided file does not exist".red());
+		return;
+	}
+	if args.checker.is_some() && !Path::new(&args.checker.clone().unwrap()).is_file() {
+		println!("{}", "The provided checker file does not exist".red());
 		return;
 	}
 
@@ -246,7 +266,10 @@ fn main() {
 	let executable: String;
 	if !is_executable(&args.filename) || (extension == "cpp" || extension == "cc" || extension == "cxx" || extension == "c") {
 		match compile_cpp(Path::new(&args.filename).to_path_buf(), &tempdir, args.compile_timeout, &args.compile_command) {
-			Ok(result) => { executable = result }
+			Ok((compiled_executable, compilation_time)) => {
+				executable = compiled_executable;
+				println!("{}", format!("Compilation completed in {:.2}s", compilation_time).green());
+			}
 			Err(error) => {
 				println!("{}", "Compilation failed with the following errors:".red());
 				println!("{}", error);
@@ -262,6 +285,22 @@ fn main() {
 		if child.is_err() {
 			println!("{}", "The provided file can't be executed!".red());
 			return;
+		}
+	}
+
+	// Checker compiling
+	let mut checker_executable: Option<String> = None;
+	if args.checker.is_some() {
+		match compile_cpp(Path::new(&args.checker.unwrap()).to_path_buf(), &tempdir, args.compile_timeout, &args.compile_command) {
+			Ok((compiled_executable, compilation_time)) => {
+				checker_executable = Some(compiled_executable);
+				println!("{}", format!("Checker compilation completed in {:.2}s", compilation_time).green());
+			}
+			Err(error) => {
+				println!("{}", "Checker compilation failed with the following errors:".red());
+				println!("{}", error);
+				return;
+			}
 		}
 	}
 
@@ -313,9 +352,9 @@ fn main() {
 		let random_input_file_entry = input_files.get(0).expect("Couldn't get random input file").as_ref().expect("Failed to acquire reference!");
 		let random_test_name = random_input_file_entry.path().file_stem().expect("Couldn't get the name of a random input file").to_str().expect("Couldn't get the name of a random input file").to_string();
 
-		let (test_result, _) = run_test(&true_command_location.unwrap().to_str().expect("The executable for the \"true\" command has an invalid path").to_string(), test_input_path, &output_dir, &random_test_name, &args.out_ext, &(1 as u64), true, 0);
+		let (test_result, _) = run_test(&true_command_location.unwrap().to_str().expect("The executable for the \"true\" command has an invalid path").to_string(), &None, test_input_path, &output_dir, &random_test_name, &args.out_ext, &( 1u64), true, 0);
 		match test_result {
-			Error { error: ExecutionError::Sio2jailError(error), .. } => {
+			ProgramError { error: ExecutionError::Sio2jailError(error), .. } => {
 				if error == "Exception occurred: System error occured: perf event open failed: Permission denied: error 13: Permission denied\n" {
 					println!("{}", "You need to run the following command to use toster with sio2jail. You may also put this option in your /etc/sysctl.conf. This will make the setting persist across reboots.".red());
 					println!("{}", "sudo sysctl -w kernel.perf_event_paranoid=-1".bright_black().italic());
@@ -358,9 +397,10 @@ fn main() {
 							ExecutionError::MemoryLimitExceeded => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
 							ExecutionError::RuntimeError(_) => { RUNTIME_ERROR_COUNT.inc(); }
 							ExecutionError::Sio2jailError(_) => { SIO2JAIL_ERROR_COUNT.inc(); }
+							ExecutionError::IncorrectCheckerFormat(_) => { CHECKER_ERROR_COUNT.inc(); }
 						}
 						let clone = Arc::clone(&ERRORS);
-						clone.lock().expect("Failed to acquire mutex!").push(Error { test_name: test_name.clone(), error });
+						clone.lock().expect("Failed to acquire mutex!").push(ProgramError { test_name: test_name.clone(), error });
 					}
 				}
 
@@ -371,7 +411,7 @@ fn main() {
 			}
 		}
 		else {
-			let (test_result, execution_result) = run_test(&executable, input_file_path.as_path(), &output_dir, &test_name, &args.out_ext, &args.timeout, sio2jail, memory_limit);
+			let (test_result, execution_result) = run_test(&executable, &checker_executable, input_file_path.as_path(), &output_dir, &test_name, &args.out_ext, &args.timeout, sio2jail, memory_limit);
 			test_time = execution_result.time_seconds;
 			test_memory = execution_result.memory_kilobytes.unwrap_or(-1);
 
@@ -379,11 +419,13 @@ fn main() {
 				match test_result {
 					Correct { .. } => { SUCCESS_COUNT.inc(); }
 					Incorrect { .. } => { INCORRECT_COUNT.inc(); }
-					Error { error: ExecutionError::TimedOut, .. } => { TIMED_OUT_COUNT.inc(); }
-					Error { error: ExecutionError::InvalidOutput, .. } => { INVALID_OUTPUT_COUNT.inc(); }
-					Error { error: ExecutionError::MemoryLimitExceeded, .. } => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
-					Error { error: ExecutionError::RuntimeError(_), .. } => { RUNTIME_ERROR_COUNT.inc(); }
-					Error { error: ExecutionError::Sio2jailError(_), .. } => { SIO2JAIL_ERROR_COUNT.inc(); }
+					ProgramError { error: ExecutionError::TimedOut, .. } => { TIMED_OUT_COUNT.inc(); }
+					ProgramError { error: ExecutionError::InvalidOutput, .. } => { INVALID_OUTPUT_COUNT.inc(); }
+					ProgramError { error: ExecutionError::MemoryLimitExceeded, .. } => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
+					ProgramError { error: ExecutionError::RuntimeError(_), .. } => { RUNTIME_ERROR_COUNT.inc(); }
+					ProgramError { error: ExecutionError::Sio2jailError(_), .. } => { SIO2JAIL_ERROR_COUNT.inc(); }
+					ProgramError { error: ExecutionError::IncorrectCheckerFormat(_), .. } => { CHECKER_ERROR_COUNT.inc(); }
+					CheckerError { .. } => { CHECKER_ERROR_COUNT.inc(); }
 					NoOutputFile { .. } => { NO_OUTPUT_FILE_COUNT.inc(); }
 				}
 
