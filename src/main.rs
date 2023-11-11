@@ -291,14 +291,29 @@ fn main() {
 	// Checker compiling
 	let mut checker_executable: Option<String> = None;
 	if args.checker.is_some() {
-		match compile_cpp(Path::new(&args.checker.unwrap()).to_path_buf(), &tempdir, args.compile_timeout, &args.compile_command) {
-			Ok((compiled_executable, compilation_time)) => {
-				checker_executable = Some(compiled_executable);
-				println!("{}", format!("Checker compilation completed in {:.2}s", compilation_time).green());
+		let checker_path = args.checker.unwrap();
+		let checker_extension = Path::new(&checker_path).extension().unwrap_or(OsStr::new("")).to_str().expect("Couldn't get the extension of the provided file");
+
+		if !is_executable(&checker_path) || (checker_extension == "cpp" || checker_extension == "cc" || checker_extension == "cxx" || checker_extension == "c") {
+			match compile_cpp(Path::new(&checker_path).to_path_buf(), &tempdir, args.compile_timeout, &args.compile_command) {
+				Ok((compiled_executable, compilation_time)) => {
+					checker_executable = Some(compiled_executable);
+					println!("{}", format!("Checker compilation completed in {:.2}s", compilation_time).green());
+				}
+				Err(error) => {
+					println!("{}", "Checker compilation failed with the following errors:".red());
+					println!("{}", error);
+					return;
+				}
 			}
-			Err(error) => {
-				println!("{}", "Checker compilation failed with the following errors:".red());
-				println!("{}", error);
+		}
+		else {
+			checker_executable = Some(tempdir.path().join(format!("{}.o", Path::new(&checker_path).file_name().expect("The provided checker is invalid!").to_str().expect("The provided checker is invalid!"))).to_str().expect("The provided checker is invalid!").to_string());
+			fs::copy(&checker_path, &checker_executable.clone().unwrap()).expect("The provided filename is invalid!");
+
+			let child = Command::new(&checker_executable.clone().unwrap()).spawn();
+			if child.is_err() {
+				println!("{}", "The provided checker can't be executed!".red());
 				return;
 			}
 		}
