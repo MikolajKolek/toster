@@ -25,7 +25,7 @@ Options:
       --io <IO>
           The input and output directory (sets both -i and -o at once)
   -c, --checker <CHECKER>
-          The source code of a checker program written in C++ that verifies if the tested program's output is correct instead of comparing it with given output files
+          The C++ source code or executable of a checker program that verifies if the tested program's output is correct instead of comparing it with given output files
           The checker must use the following protocol:
           - The checker receives the contents of the input file and the output of the tested program on stdin, separated by a single "\n" character
           - The checker outputs "C" if the output is correct, or "I <OPTIONAL_DATA>" if the output is incorrect. The optional data can include any information useful for understanding why the output is wrong and will be shown when errors are displayed
