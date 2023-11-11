@@ -11,9 +11,13 @@ pub enum TestResult {
 	},
 	Incorrect {
 		test_name: String,
-		diff: String
+		error: String
 	},
-	Error {
+	ProgramError {
+		test_name: String,
+		error: ExecutionError
+	},
+	CheckerError {
 		test_name: String,
 		error: ExecutionError
 	},
@@ -28,7 +32,8 @@ pub enum ExecutionError {
 	InvalidOutput,
 	MemoryLimitExceeded,
 	RuntimeError(String),
-	Sio2jailError(String)
+	Sio2jailError(String),
+	IncorrectCheckerFormat(String)
 }
 
 impl TestResult {
@@ -37,13 +42,17 @@ impl TestResult {
 
 		match self {
 			TestResult::Correct { .. } => {}
-			TestResult::Incorrect { test_name, diff } => {
+			TestResult::Incorrect { test_name, error } => {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
-				result.push_str(diff);
+				result.push_str(error);
 			}
-			TestResult::Error { test_name, error } => {
+			TestResult::ProgramError { test_name, error } => {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
 				result.push_str(&format!("{}", error.to_string().red()));
+			}
+			TestResult::CheckerError { test_name, error } => {
+				result.push_str(&format!("{}", format!("Test {} encountered a checker error:\n", test_name).bold()));
+				result.push_str(&format!("{}", error.to_string().blue()));
 			}
 			TestResult::NoOutputFile { test_name } => {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
@@ -58,7 +67,8 @@ impl TestResult {
 		return match self {
 			TestResult::Correct { test_name } => test_name.clone(),
 			TestResult::Incorrect { test_name, .. } => test_name.clone(),
-			TestResult::Error { test_name, .. } => test_name.clone(),
+			TestResult::ProgramError { test_name, .. } => test_name.clone(),
+			TestResult::CheckerError { test_name, .. } => test_name.clone(),
 			TestResult::NoOutputFile { test_name } => test_name.clone()
 		};
 	}
@@ -79,6 +89,7 @@ impl ExecutionError {
 			ExecutionError::MemoryLimitExceeded => "Memory limit exceeded".to_string(),
 			ExecutionError::RuntimeError(error) => format!("Runtime error {}", error),
 			ExecutionError::Sio2jailError(error) => format!("Sio2jail error: {}", error),
+			ExecutionError::IncorrectCheckerFormat(error) => format!("The checker output didn't follow the Toster checker format - {}", error)
 		};
 	}
 }
