@@ -342,7 +342,7 @@ pub fn run_test(
 		}
 		let correct_output = fs::read_to_string(Path::new(&correct_output_file_path)).expect("Failed to read output file!");
 
-		let is_correct = test_output.split_whitespace().collect::<Vec<&str>>() == correct_output.split_whitespace().collect::<Vec<&str>>();
+		let is_correct = split_trim_end(&test_output) == split_trim_end(&correct_output);
 		if is_correct {
 			(Correct { test_name: test_name.clone() }, execution_result)
 		} else {
@@ -364,9 +364,34 @@ pub fn run_test(
 	}
 }
 
+fn split_trim_end(to_split: &String) -> Vec<String> {
+	let mut res: Vec<String> = Vec::new();
+
+	let mut current_string = String::new();
+	for ch in to_split.chars() {
+		if ch == '\n' {
+			res.push(current_string.trim_end().to_string());
+			current_string = String::new();
+		}
+		else {
+			current_string.push(ch);
+		}
+	}
+
+	if !current_string.is_empty() {
+		res.push(current_string.trim_end().to_string());
+	}
+
+	while res.last().is_some() && res.last().unwrap().trim().is_empty() {
+		res.pop();
+	}
+
+	return res;
+}
+
 fn generate_diff(correct_answer: String, incorrect_answer: String) -> String {
-	let correct_split = correct_answer.split("\n").collect::<Vec<_>>();
-	let incorrect_split = incorrect_answer.split("\n").collect::<Vec<_>>();
+	let correct_split = split_trim_end(&correct_answer);
+	let incorrect_split = split_trim_end(&incorrect_answer);
 
 	let (Width(w), Height(_)) = terminal_size::terminal_size().unwrap_or((Width(40), Height(0)));
 	let mut table = Table::new();
@@ -378,10 +403,10 @@ fn generate_diff(correct_answer: String, incorrect_answer: String) -> String {
 
 	let mut row_count = 0;
 	for i in 0..max(correct_split.len(), incorrect_split.len()) {
-		let file_segment = if correct_split.len() > i { correct_split[i] } else { "" };
-		let out_segment = if incorrect_split.len() > i { incorrect_split[i] } else { "" };
+		let file_segment = if correct_split.len() > i { correct_split[i].clone() } else { "".to_string() };
+		let out_segment = if incorrect_split.len() > i { incorrect_split[i].clone() } else { "".to_string() };
 
-		if file_segment.split_whitespace().collect::<Vec<&str>>() != out_segment.split_whitespace().collect::<Vec<&str>>() {
+		if file_segment != out_segment {
 			table.add_row(vec![
 				Cell::new(i + 1),
 				Cell::new(file_segment).fg(Color::Green),
