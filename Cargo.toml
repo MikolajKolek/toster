@@ -6,12 +6,12 @@ homepage = "https://github.com/MikolajKolek/toster"
 authors = ["Mikołaj Kołek"]
 readme = "README.md"
 license = "MIT"
-version = "1.1.4"
+version = "1.2.0"
 edition = "2021"
 build = "build.rs"
 
 [dependencies]
-clap = { version = "4.4.6", features = ["derive"] }
+clap = { version = "4.4.8", features = ["derive"] }
 indicatif = { version = "0.17.7", features = ["rayon"] }
 rayon = "1.8.0"
 colored = "2.0.4"
@@ -19,10 +19,10 @@ atomic-counter = "1.0.1"
 lazy_static = "1.4.0"
 wait-timeout = "0.2.0"
 comfy-table = "7.1.0"
-tempfile = "3.8.0"
+tempfile = "3.8.1"
 terminal_size = "0.3.0"
 human-sort = "0.2.2"
-human-panic = "1.2.1"
+human-panic = "1.2.2"
 is_executable = "1.0.1"
 ctrlc = "3.4.1"
 once_cell = "1.18.0"
@@ -32,7 +32,7 @@ crossbeam-queue = "0.3.8"
 num_cpus = "1.16.0"
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
-command-fds = "0.2.2"
+command-fds = "0.2.3"
 
 [build-dependencies]
 directories = "5.0.1"
