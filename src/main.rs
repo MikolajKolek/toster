@@ -8,7 +8,7 @@ use std::ffi::OsStr;
 use std::fmt::Write as FmtWrite;
 use std::fs::{File, read_dir};
 use std::panic::PanicInfo;
-use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
@@ -190,8 +190,8 @@ fn main() {
 
 	let args = Args::parse();
 	GENERATE.store(args.generate, Release);
-	let input_dir: String = args.io.clone().unwrap_or(args.r#in);
-	let output_dir: String = args.io.clone().unwrap_or(args.out);
+	let input_dir = args.io.as_ref().unwrap_or(&args.r#in);
+	let output_dir = args.io.as_ref().unwrap_or(&args.out);
 
 	#[allow(unused_assignments)]
 	let mut sio2jail = false;
@@ -221,28 +221,28 @@ fn main() {
 	}
 
 	// Making sure that the input and output directories as well as the source code file exist
-	if args.io.is_some() && !Path::new(&args.io.unwrap()).is_dir() {
+	if args.io.as_ref().is_some_and(|io| !io.is_dir()) {
 		println!("{}", "The input/output directory does not exist".red());
 		return;
 	}
-	if !Path::new(&input_dir).is_dir() {
+	if !input_dir.is_dir() {
 		println!("{}", "The input directory does not exist".red());
 		return;
 	}
-	if !Path::new(&output_dir).is_dir() && args.checker.is_none() {
+	if !output_dir.is_dir() && args.checker.is_none() {
 		if args.generate {
-			fs::create_dir(&output_dir).expect("Failed to create output directory!");
+			fs::create_dir(output_dir).expect("Failed to create output directory!");
 		}
 		else {
 			println!("{}", "The output directory does not exist".red());
 			return;
 		}
 	}
-	if !Path::new(&args.filename).is_file() {
+	if !args.filename.is_file() {
 		println!("{}", "The provided file does not exist".red());
 		return;
 	}
-	if args.checker.is_some() && !Path::new(&args.checker.clone().unwrap()).is_file() {
+	if args.checker.as_ref().is_some_and(|checker| !checker.is_file()) {
 		println!("{}", "The provided checker file does not exist".red());
 		return;
 	}
@@ -262,13 +262,12 @@ fn main() {
 	}
 
 	// Compiling
-	let extension = Path::new(&args.filename).extension().unwrap_or(OsStr::new("")).to_str().expect("Couldn't get the extension of the provided file");
-	let executable: String;
-	if !is_executable(&args.filename) || (extension == "cpp" || extension == "cc" || extension == "cxx" || extension == "c") {
-		match compile_cpp(Path::new(&args.filename).to_path_buf(), &tempdir, args.compile_timeout, &args.compile_command) {
+	let extension = args.filename.extension().unwrap_or(OsStr::new("")).to_str().expect("Couldn't get the extension of the provided file");
+	let executable: PathBuf = if !is_executable(&args.filename) || (extension == "cpp" || extension == "cc" || extension == "cxx" || extension == "c") {
+		match compile_cpp(&args.filename, &tempdir, args.compile_timeout, &args.compile_command) {
 			Ok((compiled_executable, compilation_time)) => {
-				executable = compiled_executable;
 				println!("{}", format!("Compilation completed in {:.2}s", compilation_time).green());
+				compiled_executable
 			}
 			Err(error) => {
 				println!("{}", "Compilation failed with the following errors:".red());
@@ -278,27 +277,26 @@ fn main() {
 		}
 	}
 	else {
-		executable = tempdir.path().join(format!("{}.o", Path::new(&args.filename).file_name().expect("The provided filename is invalid!").to_str().expect("The provided filename is invalid!"))).to_str().expect("The provided filename is invalid!").to_string();
+		let executable = tempdir.path().join(format!("{}.o", args.filename.file_name().expect("The provided filename is invalid!").to_str().expect("The provided filename is invalid!")));
 		fs::copy(&args.filename, &executable).expect("The provided filename is invalid!");
 
-		let child = Command::new(&executable).spawn();
-		if child.is_err() {
+		let Ok(mut child) = Command::new(&executable).spawn() else {
 			println!("{}", "The provided file can't be executed!".red());
 			return;
-		}
-	}
+		};
+		child.kill().unwrap_or(());
+		executable
+	};
 
 	// Checker compiling
-	let mut checker_executable: Option<String> = None;
-	if args.checker.is_some() {
-		let checker_path = args.checker.unwrap();
-		let checker_extension = Path::new(&checker_path).extension().unwrap_or(OsStr::new("")).to_str().expect("Couldn't get the extension of the provided file");
+	let checker_executable: Option<PathBuf> = if let Some(checker_path) = args.checker {
+		let checker_extension = checker_path.extension().unwrap_or(OsStr::new("")).to_str().expect("Couldn't get the extension of the provided file");
 
 		if !is_executable(&checker_path) || (checker_extension == "cpp" || checker_extension == "cc" || checker_extension == "cxx" || checker_extension == "c") {
-			match compile_cpp(Path::new(&checker_path).to_path_buf(), &tempdir, args.compile_timeout, &args.compile_command) {
+			match compile_cpp(&checker_path, &tempdir, args.compile_timeout, &args.compile_command) {
 				Ok((compiled_executable, compilation_time)) => {
-					checker_executable = Some(compiled_executable);
 					println!("{}", format!("Checker compilation completed in {:.2}s", compilation_time).green());
+					Some(compiled_executable)
 				}
 				Err(error) => {
 					println!("{}", "Checker compilation failed with the following errors:".red());
@@ -308,16 +306,20 @@ fn main() {
 			}
 		}
 		else {
-			checker_executable = Some(tempdir.path().join(format!("{}.o", Path::new(&checker_path).file_name().expect("The provided checker is invalid!").to_str().expect("The provided checker is invalid!"))).to_str().expect("The provided checker is invalid!").to_string());
-			fs::copy(&checker_path, &checker_executable.clone().unwrap()).expect("The provided filename is invalid!");
+			let checker_executable = tempdir.path().join(format!("{}.o", checker_path.file_name().expect("The provided checker is invalid!").to_str().expect("The provided checker is invalid!")));
+			fs::copy(&checker_path, &checker_executable).expect("The provided filename is invalid!");
 
-			let child = Command::new(&checker_executable.clone().unwrap()).spawn();
-			if child.is_err() {
+			let Ok(mut child) = Command::new(&checker_executable).spawn() else {
 				println!("{}", "The provided checker can't be executed!".red());
 				return;
-			}
+			};
+			child.kill().unwrap_or(());
+
+			Some(checker_executable)
 		}
-	}
+	} else {
+		None
+	};
 
 	// Progress bar styling
 	let style: ProgressStyle = ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{correct} {incorrect} {ctrlc}")
@@ -354,33 +356,28 @@ fn main() {
 
 	// Testing for sio2jail errors before testing starts
 	if sio2jail {
-		let true_command_location = which("true");
-		if true_command_location.is_err() {
+		let Ok(true_command_location) = which("true") else {
 			println!("{}", "The executable for the \"true\" command could not be found".red());
 			return;
-		}
+		};
 
-		let test_input = tempdir.path().join(format!("test.in")).to_str().expect("The provided filename is invalid!").to_string();
-		let test_input_path = Path::new(&test_input);
-		File::create(test_input_path).expect("Failed to create temporary file!");
+		let test_input_path = tempdir.path().join("test.in");
+		File::create(&test_input_path).expect("Failed to create temporary file!");
 
 		let random_input_file_entry = input_files.get(0).expect("Couldn't get random input file").as_ref().expect("Failed to acquire reference!");
 		let random_test_name = random_input_file_entry.path().file_stem().expect("Couldn't get the name of a random input file").to_str().expect("Couldn't get the name of a random input file").to_string();
 
-		let (test_result, _) = run_test(&true_command_location.unwrap().to_str().expect("The executable for the \"true\" command has an invalid path").to_string(), &None, test_input_path, &output_dir, &random_test_name, &args.out_ext, &( 1u64), true, 0);
-		match test_result {
-			ProgramError { error: ExecutionError::Sio2jailError(error), .. } => {
-				if error == "Exception occurred: System error occured: perf event open failed: Permission denied: error 13: Permission denied\n" {
-					println!("{}", "You need to run the following command to use toster with sio2jail. You may also put this option in your /etc/sysctl.conf. This will make the setting persist across reboots.".red());
-					println!("{}", "sudo sysctl -w kernel.perf_event_paranoid=-1".bright_black().italic());
-				}
-				else {
-					println!("Sio2jail error: {}", error.red());
-				}
-
-				return;
+		let (test_result, _) = run_test(&true_command_location, None, &test_input_path, &output_dir, &random_test_name, &args.out_ext, &( 1u64), true, 0);
+		if let ProgramError { error: ExecutionError::Sio2jailError(error), .. } = test_result {
+			if error == "Exception occurred: System error occured: perf event open failed: Permission denied: error 13: Permission denied\n" {
+				println!("{}", "You need to run the following command to use toster with sio2jail. You may also put this option in your /etc/sysctl.conf. This will make the setting persist across reboots.".red());
+				println!("{}", "sudo sysctl -w kernel.perf_event_paranoid=-1".bright_black().italic());
 			}
-			_ => {}
+			else {
+				println!("Sio2jail error: {}", error.red());
+			}
+
+			return;
 		}
 	}
 
@@ -389,15 +386,14 @@ fn main() {
 	input_files.par_iter().progress_with_style(style).for_each(|input| {
 		let input_file_entry = input.as_ref().expect("Failed to acquire reference!");
 		let input_file_path = input_file_entry.path();
-		let input_file_path_str = input_file_path.to_string_lossy().to_string();
-		let test_name = input_file_entry.path().file_stem().expect(&*format!("The input file {} is invalid!", input_file_path_str)).to_str().expect(&*format!("The input file {} is invalid!", input_file_path_str)).to_string();
+		let test_name = input_file_entry.path().file_stem().expect(&format!("The input file {} is invalid!", input_file_path.display())).to_str().expect(&format!("The input file {} is invalid!", input_file_path.display())).to_string();
 
 		let mut test_time: f64 = f64::MAX;
 		let mut test_memory: i64 = -1;
 		if args.generate {
-			let input_file = File::open(input_file_path).expect(&*format!("Could not open input file {}", input_file_path_str));
-			let output_file_path = format!("{}/{}{}", &output_dir, test_name, args.out_ext);
-			let output_file = File::create(Path::new(&output_file_path)).expect("Failed to create output file!");
+			let input_file = File::open(&input_file_path).expect(&format!("Could not open input file {}", input_file_path.display()));
+			let output_file_path = output_dir.join(format!("{}{}", test_name, args.out_ext));
+			let output_file = File::create(&output_file_path).expect("Failed to create output file!");
 
 			let (execution_result, execution_error) = generate_output_default(&executable, input_file, output_file, &args.timeout);
 			if !RECEIVED_CTRL_C.load(Acquire) {
@@ -415,7 +411,7 @@ fn main() {
 							ExecutionError::IncorrectCheckerFormat(_) => { CHECKER_ERROR_COUNT.inc(); }
 						}
 						let clone = Arc::clone(&ERRORS);
-						clone.lock().expect("Failed to acquire mutex!").push(ProgramError { test_name: test_name.clone(), error });
+						clone.lock().expect("Failed to acquire mutex!").push(ProgramError { test_name: test_name.to_string(), error });
 					}
 				}
 
@@ -426,7 +422,7 @@ fn main() {
 			}
 		}
 		else {
-			let (test_result, execution_result) = run_test(&executable, &checker_executable, input_file_path.as_path(), &output_dir, &test_name, &args.out_ext, &args.timeout, sio2jail, memory_limit);
+			let (test_result, execution_result) = run_test(&executable, checker_executable.as_deref(), input_file_path.as_path(), &output_dir, &test_name, &args.out_ext, &args.timeout, sio2jail, memory_limit);
 			test_time = execution_result.time_seconds;
 			test_memory = execution_result.memory_kilobytes.unwrap_or(-1);
 
@@ -458,13 +454,13 @@ fn main() {
 			let slowest_test_clone = Arc::clone(&SLOWEST_TEST);
 			let mut slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");
 			if test_time > slowest_test_mutex.0 {
-				*slowest_test_mutex = (test_time, test_name.clone());
+				*slowest_test_mutex = (test_time, test_name.to_string());
 			}
 
 			let most_memory_clone = Arc::clone(&MOST_MEMORY_USED);
 			let mut most_memory_mutex = most_memory_clone.lock().expect("Failed to acquire mutex!");
 			if test_memory > most_memory_mutex.0 {
-				*most_memory_mutex = (test_memory, test_name.clone());
+				*most_memory_mutex = (test_memory, test_name.to_string());
 			}
 		}
 		else {
