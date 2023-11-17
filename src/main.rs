@@ -280,12 +280,11 @@ fn main() {
 		let executable = tempdir.path().join(format!("{}.o", args.filename.file_name().expect("The provided filename is invalid!").to_str().expect("The provided filename is invalid!")));
 		fs::copy(&args.filename, &executable).expect("The provided filename is invalid!");
 
-		// TODO: Shouldn't we wait for the execution to finish or kill the child?
-		let Ok(child) = Command::new(&executable).spawn() else {
+		let Ok(mut child) = Command::new(&executable).spawn() else {
 			println!("{}", "The provided file can't be executed!".red());
 			return;
 		};
-		// child.kill() ??
+		child.kill().unwrap_or(());
 		executable
 	};
 
@@ -310,12 +309,11 @@ fn main() {
 			let checker_executable = tempdir.path().join(format!("{}.o", checker_path.file_name().expect("The provided checker is invalid!").to_str().expect("The provided checker is invalid!")));
 			fs::copy(&checker_path, &checker_executable).expect("The provided filename is invalid!");
 
-			// TODO: Same as above
-			let Ok(child) = Command::new(&checker_executable).spawn() else {
+			let Ok(mut child) = Command::new(&checker_executable).spawn() else {
 				println!("{}", "The provided checker can't be executed!".red());
 				return;
 			};
-			// child.kill();
+			child.kill().unwrap_or(());
 
 			Some(checker_executable)
 		}
