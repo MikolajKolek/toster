@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use clap::Parser;
 
 #[derive(Parser, Debug)]
@@ -5,7 +6,7 @@ use clap::Parser;
 pub struct Args {
 	/// Input directory
 	#[clap(short, long, value_parser, default_value = "in")]
-	pub r#in: String,
+	pub r#in: PathBuf,
 
 	/// Input file extension
 	#[clap(long, value_parser, default_value = ".in")]
@@ -13,7 +14,7 @@ pub struct Args {
 
 	/// Output directory
 	#[clap(short, long, value_parser, default_value = "out")]
-	pub out: String,
+	pub out: PathBuf,
 
 	/// Output file extension
 	#[clap(long, value_parser, default_value = ".out")]
@@ -21,14 +22,14 @@ pub struct Args {
 
 	/// The input and output directory (sets both -i and -o at once)
 	#[clap(long, value_parser)]
-	pub io: Option<String>,
+	pub io: Option<PathBuf>,
 
 	/// The C++ source code or executable of a checker program that verifies if the tested program's output is correct instead of comparing it with given output files
 	/// The checker must use the following protocol:
 	/// - The checker receives the contents of the input file and the output of the tested program on stdin, separated by a single "\n" character
 	/// - The checker outputs "C" if the output is correct, or "I <OPTIONAL_DATA>" if the output is incorrect. The optional data can include any information useful for understanding why the output is wrong and will be shown when errors are displayed
 	#[clap(short, long, value_parser, verbatim_doc_comment)]
-	pub checker: Option<String>,
+	pub checker: Option<PathBuf>,
 
 	/// The number of seconds after which a test or generation times out if the program does not return
 	#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
@@ -64,5 +65,5 @@ pub struct Args {
 
 	/// The name of the file containing the source code or the executable you want to test
 	#[clap(value_parser)]
-	pub filename: String
+	pub filename: PathBuf
 }
