@@ -86,8 +86,7 @@ pub fn compile_cpp(
 
 	let mut child = match child {
 		Ok(child) => child,
-		// TODO: Is matches! really necessary? Doesn't error.kind() == NotFound work too?
-		Err(error) if matches!(error.kind(), NotFound) => { return Err("The compiler was not found!".to_string()) }
+		Err(error) if error.kind() == NotFound => { return Err("The compiler was not found!".to_string()) }
 		Err(error) => { return Err(error.to_string()) }
 	};
 
@@ -255,7 +254,7 @@ pub fn checker_verify(
 			let checker_output = fs::read_to_string(checker_output_file_path).expect("Couldn't read checker output file!");
 
 			match checker_output.chars().nth(0) {
-				None => CheckerError { test_name: test_name.to_string(), error: IncorrectCheckerFormat("the checker retured an empty file".to_string()) }, // TODO: Fix typo
+				None => CheckerError { test_name: test_name.to_string(), error: IncorrectCheckerFormat("the checker returned an empty file".to_string()) },
 				Some('C') => Correct { test_name: test_name.to_string() },
 				Some('N') => {
 					let checker_error = if checker_output.len() > 1 { checker_output.split_at(2).1.to_string() } else { String::new() };
