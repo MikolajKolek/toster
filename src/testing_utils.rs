@@ -43,30 +43,23 @@ pub fn fill_tempfile_pool(tempdir: &TempDir) {
 }
 
 pub fn init_sio2jail() -> bool {
-	let base_dirs = BaseDirs::new();
-	if base_dirs.is_none() {
+	let Some(binding) = BaseDirs::new() else {
 		println!("{}", "No valid home directory path could be retrieved from the operating system. Sio2jail could not be found".red());
 		return false;
-	}
-	let binding = base_dirs.unwrap();
-	let executable_dir = binding.executable_dir();
-	if executable_dir.is_none() {
+	};
+	let Some(executable_dir) = binding.executable_dir() else {
 		println!("{}", "Couldn't locate the user's executable directory. Sio2jail could not be found".red());
 		return false;
-	}
-	let executable_dir_str = executable_dir.unwrap().to_str();
-	if executable_dir_str.is_none() {
-		println!("{}", "The user's executable directory is invalid. Sio2jail could not be found".red());
+	};
+
+	let result = executable_dir.join("sio2jail");
+	if !result.exists() {
+		println!("{}{}", "Sio2jail could not be found at ".red(), result.display().to_string().red());
 		return false;
 	}
 
-	let result = format!("{}/sio2jail", executable_dir_str.unwrap());
-	if !Path::new(&result).exists() {
-		println!("{}{}", "Sio2jail could not be found at ".red(), result.red());
-		return false;
-	}
-
-	SIO2JAIL_PATH.get_or_init(|| { return result; });
+	// TODO: Change type of SIO2JAIL_PATH to PathBuf or remove unwrap()
+	SIO2JAIL_PATH.get_or_init(|| result.to_str().unwrap().to_string());
 	return true;
 }
 
@@ -87,20 +80,18 @@ pub fn compile_cpp(
 	let compilation_result_path = tempdir.path().join(format!("{}.out", executable_file_base.to_str().expect("The provided filename is invalid!")));
 	let compilation_result_file = File::create(&compilation_result_path).expect("Failed to create temporary file!");
 	let time_before_compilation = Instant::now();
-	let command = Command::new(&split_cmd.nth(0).expect("The compile command is invalid!"))
+	let child = Command::new(&split_cmd.nth(0).expect("The compile command is invalid!"))
 		.args(split_cmd.collect::<Vec<&str>>())
 		.stderr(compilation_result_file)
 		.spawn();
 
-	if command.as_ref().is_err() {
-		return if matches!(command.as_ref().unwrap_err().kind(), NotFound) {
-			Err("The compiler was not found!".to_string())
-		} else {
-			Err(command.unwrap_err().to_string())
-		}
-	}
+	let mut child = match child {
+		Ok(child) => child,
+		// TODO: Is matches! really necessary? Doesn't error.kind() == NotFound work too?
+		Err(error) if matches!(error.kind(), NotFound) => { return Err("The compiler was not found!".to_string()) }
+		Err(error) => { return Err(error.to_string()) }
+	};
 
-	let mut child = command.unwrap();
 	match child.wait_timeout(Duration::from_secs(compile_timeout)).unwrap() {
 		Some(status) => {
 			if status.code().expect("The compiler returned an invalid status code") != 0 {
@@ -131,27 +122,26 @@ pub fn generate_output_default(
 		.spawn()
 		.expect("Failed to run file!");
 
-	return match child.wait_timeout(Duration::from_secs(*timeout)).unwrap() {
-		Some(status) => {
-			if status.code().is_none() {
-				#[cfg(all(unix))]
-				if cfg!(unix) && status.signal().expect("The program returned an invalid status code!") == 2 {
-					thread::sleep(Duration::from_secs(u64::MAX));
-				}
-
-				return (ExecutionResult { time_seconds: time_before_run.elapsed().as_secs_f64(), memory_kilobytes: None }, Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", status.to_string()))))
-			}
-			if status.code().unwrap() != 0 {
-				return (ExecutionResult { time_seconds: time_before_run.elapsed().as_secs_f64(), memory_kilobytes: None }, Err(RuntimeError(format!("- the program returned a non-zero return code: {}", status.code().unwrap()))))
-			}
-
-			(ExecutionResult { time_seconds: time_before_run.elapsed().as_secs_f64(), memory_kilobytes: None }, Ok(()))
-		}
+	match child.wait_timeout(Duration::from_secs(*timeout)).unwrap() {
+		Some(status) => match status.code() {
+			Some(0) => (
+				ExecutionResult { time_seconds: time_before_run.elapsed().as_secs_f64(), memory_kilobytes: None },
+				Ok(())
+			),
+			Some(exit_code) => (
+				ExecutionResult { time_seconds: time_before_run.elapsed().as_secs_f64(), memory_kilobytes: None },
+				Err(RuntimeError(format!("- the program returned a non-zero return code: {}", exit_code)))
+			),
+			None => (
+				ExecutionResult { time_seconds: time_before_run.elapsed().as_secs_f64(), memory_kilobytes: None },
+				Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", status.to_string())))
+			),
+		},
 		None => {
 			child.kill().unwrap();
 			(ExecutionResult { time_seconds: *timeout as f64, memory_kilobytes: None }, Err(TimedOut))
 		}
-	};
+	}
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -178,11 +168,11 @@ pub fn generate_output_sio2jail(
 		.spawn()
 		.expect("Failed to run file!");
 
-	let command_result = child.wait_timeout(Duration::from_secs(*timeout)).unwrap();
-	if command_result.is_none() {
+	let status = child.wait_timeout(Duration::from_secs(*timeout)).unwrap();
+	let Some(status) = status else {
 		child.kill().unwrap();
 		return (ExecutionResult { time_seconds: *timeout as f64, memory_kilobytes: None }, Err(TimedOut));
-	}
+	};
 
 	let error_output = fs::read_to_string(error_file_path).expect("Couldn't read sio2jail error output");
 	if !error_output.is_empty() {
@@ -203,22 +193,24 @@ pub fn generate_output_sio2jail(
 	let memory_kilobytes = split[4].parse::<i64>().expect("Sio2jail returned invalid memory usage in the output");
 	let error_message = sio2jail_output.lines().nth(1);
 
-	let status = command_result.unwrap();
-	if status.code().is_none() {
-		#[cfg(all(unix))]
-		if cfg!(unix) && status.signal().expect("Sio2jail returned an invalid status code!") == 2 {
-			thread::sleep(Duration::from_secs(u64::MAX));
-		}
+	match status.code() {
+		None => {
+			#[cfg(all(unix))]
+			if cfg!(unix) && status.signal().expect("Sio2jail returned an invalid status code!") == 2 {
+				thread::sleep(Duration::from_secs(u64::MAX));
+			}
 
-		return (ExecutionResult { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, Err(RuntimeError(format!    ("- the process was terminated with the following error:\n{}", status.to_string()))))
-	}
-	if status.code().unwrap() != 0 {
-		return (ExecutionResult { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, Err(Sio2jailError(format!("Sio2jail returned an invalid status code: {}", status.code().unwrap()))) );
+			return (ExecutionResult { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, Err(RuntimeError(format!    ("- the process was terminated with the following error:\n{}", status.to_string()))))
+		}
+		Some(0) => {}
+		Some(exit_code) => {
+			return (ExecutionResult { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, Err(Sio2jailError(format!("Sio2jail returned an invalid status code: {}", exit_code))) );
+		}
 	}
 
 	return (ExecutionResult { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, match sio2jail_status {
 		"OK" => Ok(()),
-		"RE" | "RV" => Err(RuntimeError(if error_message.is_none() { String::new() } else { format!("- {}", error_message.unwrap()) })),
+		"RE" | "RV" => Err(RuntimeError(error_message.and_then(|message| Some(format!("- {}", message))).unwrap_or(String::new()))),
 		"TLE" => Err(TimedOut),
 		"MLE" => Err(MemoryLimitExceeded),
 		"OLE" => Err(RuntimeError(format!("- output limit exceeded"))),
@@ -249,34 +241,30 @@ pub fn checker_verify(
 
 	return match child.wait_timeout(Duration::from_secs(*timeout)).unwrap() {
 		Some(status) => {
-			if status.code().is_none() {
+			let Some(exit_code) = status.code() else {
 				#[cfg(all(unix))]
 				if cfg!(unix) && status.signal().expect("The checker returned an invalid status code!") == 2 {
 					thread::sleep(Duration::from_secs(u64::MAX));
 				}
 
 				return CheckerError { test_name: test_name.clone(), error: RuntimeError(format!("- the process was terminated with the following error:\n{}", status.to_string())) }
-			}
-			if status.code().unwrap() != 0 {
+			};
+			if exit_code != 0 {
 				return CheckerError { test_name: test_name.clone(), error: RuntimeError(format!("- the checker returned a non-zero return code: {}", status.code().unwrap())) }
 			}
 
 			let checker_output = fs::read_to_string(checker_output_file_path).expect("Couldn't read checker output file!");
 
-			if checker_output.len() == 0 {
-				return CheckerError { test_name: test_name.clone(), error: IncorrectCheckerFormat("the checker retured an empty file".to_string()) };
-			}
-			if checker_output.chars().nth(0).unwrap() != 'C' && checker_output.chars().nth(0).unwrap() != 'I' {
-				return CheckerError { test_name: test_name.clone(), error: IncorrectCheckerFormat("the first character of the checker's output wasn't C or I".to_string()) };
-			}
+			match checker_output.chars().nth(0) {
+				None => CheckerError { test_name: test_name.clone(), error: IncorrectCheckerFormat("the checker retured an empty file".to_string()) }, // TODO: Fix typo
+				Some('C') => Correct { test_name: test_name.clone() },
+				Some('N') => {
+					let checker_error = if checker_output.len() > 1 { checker_output.split_at(2).1.to_string() } else { String::new() };
+					let error_message = format!("Incorrect output{}{}", if checker_error.trim().is_empty() { "" } else { ": " }, checker_error.trim()).red();
 
-			return if checker_output.chars().nth(0).unwrap() == 'C' {
-				Correct { test_name: test_name.clone() }
-			} else {
-				let checker_error = if checker_output.len() > 1 { checker_output.split_at(2).1.to_string() } else { String::new() };
-				let error_message = format!("Incorrect output{}{}", if checker_error.trim().is_empty() { "" } else { ": " }, checker_error.trim()).red();
-
-				Incorrect { test_name: test_name.clone(), error: error_message.to_string() }
+					Incorrect { test_name: test_name.clone(), error: error_message.to_string() }
+				}
+				Some(_) => CheckerError { test_name: test_name.clone(), error: IncorrectCheckerFormat("the first character of the checker's output wasn't C or I".to_string()) }
 			}
 		}
 		None => {
@@ -286,6 +274,7 @@ pub fn checker_verify(
 	};
 }
 
+// TODO: Change &String to &str or to Path
 pub fn run_test(
 	executable_path: &String,
 	checker_path: &Option<String>,
@@ -321,21 +310,42 @@ pub fn run_test(
 	#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 	let (execution_result, execution_error) = generate_output_default(executable_path, input_file, test_output_file, timeout);
 
-	if execution_error.is_err() {
+	if let Err(execution_error) = execution_error {
 		TEMPFILE_POOL.push(test_output_file_path).expect("Couldn't push into tempfile pool");
-
-		let result = execution_error.unwrap_err();
-		return (ProgramError { test_name: test_name.clone(), error: result }, execution_result);
+		return (ProgramError { test_name: test_name.clone(), error: execution_error }, execution_result);
 	}
 
 	let test_output = fs::read_to_string(&test_output_file_path);
 	TEMPFILE_POOL.push(test_output_file_path).expect("Couldn't push into tempfile pool");
-	if test_output.is_err() {
+	let Ok(test_output) = test_output else {
 		return (ProgramError { test_name: test_name.clone(), error: InvalidOutput }, execution_result);
-	}
-	let test_output = test_output.unwrap();
+	};
 
-	return if checker_path.is_none() {
+	return if let Some(checker_path) = checker_path {
+		let checker_input_file_path = TEMPFILE_POOL.pop().expect("Couldn't acquire tempfile!");
+		let checker_input_file = File::create(&checker_input_file_path).expect("Failed to create temporary file!");
+		let checker_output_file_path = TEMPFILE_POOL.pop().expect("Couldn't acquire tempfile!");
+		let checker_output_file = File::create(&checker_output_file_path).expect("Failed to create temporary file!");
+
+		let result = (
+			checker_verify(test_name,
+				&checker_path,
+				&fs::read_to_string(input_file_path).expect("Couldn't read input file!"),
+				&test_output,
+				&checker_input_file_path,
+				checker_input_file,
+				&checker_output_file_path,
+				checker_output_file,
+				timeout
+			),
+			execution_result
+		);
+
+		TEMPFILE_POOL.push(checker_input_file_path).expect("Couldn't push into tempfile pool");
+		TEMPFILE_POOL.push(checker_output_file_path).expect("Couldn't push into tempfile pool");
+
+		result
+	} else {
 		let correct_output_file_path = format!("{}/{}{}", &output_dir, &test_name, &out_extension);
 		if !Path::new(&correct_output_file_path).is_file() {
 			return (NoOutputFile { test_name: test_name.clone() }, ExecutionResult { time_seconds: 0f64, memory_kilobytes: None });
@@ -348,19 +358,6 @@ pub fn run_test(
 		} else {
 			(Incorrect { test_name: test_name.clone(), error: generate_diff(correct_output, test_output) }, execution_result)
 		}
-	}
-	else {
-		let checker_input_file_path = TEMPFILE_POOL.pop().expect("Couldn't acquire tempfile!");
-		let checker_input_file = File::create(&checker_input_file_path).expect("Failed to create temporary file!");
-		let checker_output_file_path = TEMPFILE_POOL.pop().expect("Couldn't acquire tempfile!");
-		let checker_output_file = File::create(&checker_output_file_path).expect("Failed to create temporary file!");
-
-		let result = (checker_verify(test_name, &checker_path.as_ref().unwrap(), &fs::read_to_string(input_file_path).expect("Couldn't read input file!"), &test_output, &checker_input_file_path, checker_input_file, &checker_output_file_path, checker_output_file, timeout), execution_result);
-
-		TEMPFILE_POOL.push(checker_input_file_path).expect("Couldn't push into tempfile pool");
-		TEMPFILE_POOL.push(checker_output_file_path).expect("Couldn't push into tempfile pool");
-
-		result
 	}
 }
 
@@ -382,7 +379,7 @@ fn split_trim_end(to_split: &String) -> Vec<String> {
 		res.push(current_string.trim_end().to_string());
 	}
 
-	while res.last().is_some() && res.last().unwrap().trim().is_empty() {
+	while res.last().is_some_and(|last| last.trim().is_empty()) {
 		res.pop();
 	}
 
