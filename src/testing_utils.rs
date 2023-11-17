@@ -130,10 +130,17 @@ pub fn generate_output_default(
 				ExecutionResult { time_seconds: time_before_run.elapsed().as_secs_f64(), memory_kilobytes: None },
 				Err(RuntimeError(format!("- the program returned a non-zero return code: {}", exit_code)))
 			),
-			None => (
-				ExecutionResult { time_seconds: time_before_run.elapsed().as_secs_f64(), memory_kilobytes: None },
-				Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", status.to_string())))
-			),
+			None => {
+				#[cfg(all(unix))]
+				if cfg!(unix) && status.signal().expect("The program returned an invalid status code!") == 2 {
+					thread::sleep(Duration::from_secs(u64::MAX));
+				}
+
+				(
+					ExecutionResult { time_seconds: time_before_run.elapsed().as_secs_f64(), memory_kilobytes: None },
+					Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", status.to_string())))
+				)
+			},
 		},
 		None => {
 			child.kill().unwrap();
