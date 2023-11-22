@@ -1,12 +1,13 @@
 mod args;
 mod test_result;
 mod testing_utils;
+mod prepare_input;
 
 use std::{fs, panic, process, thread};
 use std::cmp::Ordering;
 use std::ffi::OsStr;
 use std::fmt::Write as FmtWrite;
-use std::fs::{File, read_dir};
+use std::fs::File;
 use std::panic::PanicInfo;
 use std::path::PathBuf;
 use std::process::Command;
@@ -18,14 +19,14 @@ use atomic_counter::{AtomicCounter, RelaxedCounter};
 use clap::Parser;
 use colored::Colorize;
 use human_panic::{handle_dump, print_msg};
-use indicatif::{ParallelProgressIterator, ProgressState, ProgressStyle};
+use indicatif::{ParallelProgressIterator, ProgressBar, ProgressState, ProgressStyle};
 use is_executable::is_executable;
 use lazy_static::lazy_static;
-use rayon::iter::IntoParallelRefIterator;
 use rayon::prelude::*;
 use tempfile::tempdir;
 use which::which;
 use args::Args;
+use crate::prepare_input::{prepare_file_inputs, TestInputSource};
 use crate::test_result::{ExecutionError, TestResult};
 use crate::test_result::TestResult::CheckerError;
 use crate::testing_utils::{compile_cpp, fill_tempfile_pool, generate_output_default, init_sio2jail, run_test};
@@ -336,23 +337,8 @@ fn main() {
 			write!(w, "{}", "(Press Ctrl+C to stop testing and print current results)".bright_black()).expect("Displaying the progress bar Ctrl+C message failed!")
 		);
 
-	// Filtering out input files
-	let mut input_files = read_dir(&input_dir).expect("Cannot open input directory!").collect::<Vec<_>>();
-	input_files.retain(|input| {
-		let input_path = input.as_ref().expect("Failed to acquire reference!").path();
-		let extension = input_path.extension();
-
-		return match extension {
-			None => false,
-			Some(ext) => ".".to_owned() + &ext.to_str().unwrap_or("") == args.in_ext
-		};
-	});
-	TEST_COUNT.store(input_files.len(), Release);
-
-	if input_files.is_empty() {
-		println!("{}", "There are no files in the input directory with the provided file extension".red());
-		return;
-	}
+	let inputs = prepare_file_inputs(&input_dir, &args.in_ext);
+	TEST_COUNT.store(inputs.test_count, Release);
 
 	// Testing for sio2jail errors before testing starts
 	if sio2jail {
@@ -364,108 +350,108 @@ fn main() {
 		let test_input_path = tempdir.path().join("test.in");
 		File::create(&test_input_path).expect("Failed to create temporary file!");
 
-		let random_input_file_entry = input_files.get(0).expect("Couldn't get random input file").as_ref().expect("Failed to acquire reference!");
-		let random_test_name = random_input_file_entry.path().file_stem().expect("Couldn't get the name of a random input file").to_str().expect("Couldn't get the name of a random input file").to_string();
-
-		let (test_result, _) = run_test(&true_command_location, None, &test_input_path, &output_dir, &random_test_name, &args.out_ext, &( 1u64), true, 0);
-		if let ProgramError { error: ExecutionError::Sio2jailError(error), .. } = test_result {
-			if error == "Exception occurred: System error occured: perf event open failed: Permission denied: error 13: Permission denied\n" {
-				println!("{}", "You need to run the following command to use toster with sio2jail. You may also put this option in your /etc/sysctl.conf. This will make the setting persist across reboots.".red());
-				println!("{}", "sudo sysctl -w kernel.perf_event_paranoid=-1".bright_black().italic());
-			}
-			else {
-				println!("Sio2jail error: {}", error.red());
-			}
-
-			return;
-		}
+		todo!("File iterator makes it impossible to access the first input file");
+		// let random_input_file_entry = input_files.get(0).expect("Couldn't get random input file").as_ref().expect("Failed to acquire reference!");
+		// let random_test_name = random_input_file_entry.path().file_stem().expect("Couldn't get the name of a random input file").to_str().expect("Couldn't get the name of a random input file").to_string();
+		//
+		// let (test_result, _) = run_test(&true_command_location, None, &test_input_path, &output_dir, &random_test_name, &args.out_ext, &( 1u64), true, 0);
+		// if let ProgramError { error: ExecutionError::Sio2jailError(error), .. } = test_result {
+		// 	if error == "Exception occurred: System error occured: perf event open failed: Permission denied: error 13: Permission denied\n" {
+		// 		println!("{}", "You need to run the following command to use toster with sio2jail. You may also put this option in your /etc/sysctl.conf. This will make the setting persist across reboots.".red());
+		// 		println!("{}", "sudo sysctl -w kernel.perf_event_paranoid=-1".bright_black().italic());
+		// 	}
+		// 	else {
+		// 		println!("Sio2jail error: {}", error.red());
+		// 	}
+		//
+		// 	return;
+		// }
 	}
 
-	TIME_BEFORE_TESTING.set(Instant::now()).expect("Couldn't store timestamp before testing!");
 	// Running tests / generating output
-	input_files.par_iter().progress_with_style(style).for_each(|input| {
-		let input_file_entry = input.as_ref().expect("Failed to acquire reference!");
-		let input_file_path = input_file_entry.path();
-		let test_name = input_file_entry.path().file_stem().expect(&format!("The input file {} is invalid!", input_file_path.display())).to_str().expect(&format!("The input file {} is invalid!", input_file_path.display())).to_string();
+	TIME_BEFORE_TESTING.set(Instant::now()).expect("Couldn't store timestamp before testing!");
+	let progress_bar = ProgressBar::new(inputs.test_count as u64).with_style(style);
+	inputs.iterator.progress_with(progress_bar).try_for_each(|input| -> Option<()> {
+		debug_assert!(!RECEIVED_CTRL_C.load(Acquire), "Test started after CTRL+C has been pressed");
+
+		let input_file_path = match input.input_source { TestInputSource::File(path) => path };
 
 		let mut test_time: f64 = f64::MAX;
 		let mut test_memory: i64 = -1;
 		if args.generate {
 			let input_file = File::open(&input_file_path).expect(&format!("Could not open input file {}", input_file_path.display()));
-			let output_file_path = output_dir.join(format!("{}{}", test_name, args.out_ext));
+			let output_file_path = output_dir.join(format!("{}{}", input.test_name, args.out_ext));
 			let output_file = File::create(&output_file_path).expect("Failed to create output file!");
 
 			let (execution_result, execution_error) = generate_output_default(&executable, input_file, output_file, &args.timeout);
-			if !RECEIVED_CTRL_C.load(Acquire) {
-				match execution_error {
-					Ok(()) => {
-						SUCCESS_COUNT.inc();
-					}
-					Err(error) => {
-						match error {
-							ExecutionError::TimedOut => { TIMED_OUT_COUNT.inc(); }
-							ExecutionError::InvalidOutput => { INVALID_OUTPUT_COUNT.inc(); }
-							ExecutionError::MemoryLimitExceeded => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
-							ExecutionError::RuntimeError(_) => { RUNTIME_ERROR_COUNT.inc(); }
-							ExecutionError::Sio2jailError(_) => { SIO2JAIL_ERROR_COUNT.inc(); }
-							ExecutionError::IncorrectCheckerFormat(_) => { CHECKER_ERROR_COUNT.inc(); }
-						}
-						let clone = Arc::clone(&ERRORS);
-						clone.lock().expect("Failed to acquire mutex!").push(ProgramError { test_name: test_name.to_string(), error });
-					}
+			if RECEIVED_CTRL_C.load(Acquire) {
+				return None;
+			}
+			match execution_error {
+				Ok(()) => {
+					SUCCESS_COUNT.inc();
 				}
+				Err(error) => {
+					match error {
+						ExecutionError::TimedOut => { TIMED_OUT_COUNT.inc(); }
+						ExecutionError::InvalidOutput => { INVALID_OUTPUT_COUNT.inc(); }
+						ExecutionError::MemoryLimitExceeded => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
+						ExecutionError::RuntimeError(_) => { RUNTIME_ERROR_COUNT.inc(); }
+						ExecutionError::Sio2jailError(_) => { SIO2JAIL_ERROR_COUNT.inc(); }
+						ExecutionError::IncorrectCheckerFormat(_) => { CHECKER_ERROR_COUNT.inc(); }
+					}
+					let clone = Arc::clone(&ERRORS);
+					clone.lock().expect("Failed to acquire mutex!").push(ProgramError { test_name: input.test_name.clone(), error });
+				}
+			}
 
-				test_time = execution_result.time_seconds;
-			}
-			else {
-				thread::sleep(Duration::from_secs(u64::MAX));
-			}
+			test_time = execution_result.time_seconds;
 		}
 		else {
-			let (test_result, execution_result) = run_test(&executable, checker_executable.as_deref(), input_file_path.as_path(), &output_dir, &test_name, &args.out_ext, &args.timeout, sio2jail, memory_limit);
+			let (test_result, execution_result) = run_test(&executable, checker_executable.as_deref(), input_file_path.as_path(), &output_dir, &input.test_name, &args.out_ext, &args.timeout, sio2jail, memory_limit);
 			test_time = execution_result.time_seconds;
 			test_memory = execution_result.memory_kilobytes.unwrap_or(-1);
 
-			if !RECEIVED_CTRL_C.load(Acquire) {
-				match test_result {
-					Correct { .. } => { SUCCESS_COUNT.inc(); }
-					Incorrect { .. } => { INCORRECT_COUNT.inc(); }
-					ProgramError { error: ExecutionError::TimedOut, .. } => { TIMED_OUT_COUNT.inc(); }
-					ProgramError { error: ExecutionError::InvalidOutput, .. } => { INVALID_OUTPUT_COUNT.inc(); }
-					ProgramError { error: ExecutionError::MemoryLimitExceeded, .. } => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
-					ProgramError { error: ExecutionError::RuntimeError(_), .. } => { RUNTIME_ERROR_COUNT.inc(); }
-					ProgramError { error: ExecutionError::Sio2jailError(_), .. } => { SIO2JAIL_ERROR_COUNT.inc(); }
-					ProgramError { error: ExecutionError::IncorrectCheckerFormat(_), .. } => { CHECKER_ERROR_COUNT.inc(); }
-					CheckerError { .. } => { CHECKER_ERROR_COUNT.inc(); }
-					NoOutputFile { .. } => { NO_OUTPUT_FILE_COUNT.inc(); }
-				}
-
-				if !test_result.is_correct() {
-					let clone = Arc::clone(&ERRORS);
-					clone.lock().expect("Failed to acquire mutex!").push(test_result);
-				}
+			if RECEIVED_CTRL_C.load(Acquire) {
+				return None
 			}
-			else {
-				thread::sleep(Duration::from_secs(u64::MAX));
+
+			match test_result {
+				Correct { .. } => { SUCCESS_COUNT.inc(); }
+				Incorrect { .. } => { INCORRECT_COUNT.inc(); }
+				ProgramError { error: ExecutionError::TimedOut, .. } => { TIMED_OUT_COUNT.inc(); }
+				ProgramError { error: ExecutionError::InvalidOutput, .. } => { INVALID_OUTPUT_COUNT.inc(); }
+				ProgramError { error: ExecutionError::MemoryLimitExceeded, .. } => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
+				ProgramError { error: ExecutionError::RuntimeError(_), .. } => { RUNTIME_ERROR_COUNT.inc(); }
+				ProgramError { error: ExecutionError::Sio2jailError(_), .. } => { SIO2JAIL_ERROR_COUNT.inc(); }
+				ProgramError { error: ExecutionError::IncorrectCheckerFormat(_), .. } => { CHECKER_ERROR_COUNT.inc(); }
+				CheckerError { .. } => { CHECKER_ERROR_COUNT.inc(); }
+				NoOutputFile { .. } => { NO_OUTPUT_FILE_COUNT.inc(); }
+			}
+
+			if !test_result.is_correct() {
+				let clone = Arc::clone(&ERRORS);
+				clone.lock().expect("Failed to acquire mutex!").push(test_result);
 			}
 		}
 
-		if !RECEIVED_CTRL_C.load(Acquire) {
-			let slowest_test_clone = Arc::clone(&SLOWEST_TEST);
-			let mut slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");
-			if test_time > slowest_test_mutex.0 {
-				*slowest_test_mutex = (test_time, test_name.to_string());
-			}
+		if RECEIVED_CTRL_C.load(Acquire) {
+			return None;
+		}
 
-			let most_memory_clone = Arc::clone(&MOST_MEMORY_USED);
-			let mut most_memory_mutex = most_memory_clone.lock().expect("Failed to acquire mutex!");
-			if test_memory > most_memory_mutex.0 {
-				*most_memory_mutex = (test_memory, test_name.to_string());
-			}
+		let slowest_test_clone = Arc::clone(&SLOWEST_TEST);
+		let mut slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");
+		if test_time > slowest_test_mutex.0 {
+			*slowest_test_mutex = (test_time, input.test_name.clone());
 		}
-		else {
-			thread::sleep(Duration::from_secs(u64::MAX));
+
+		let most_memory_clone = Arc::clone(&MOST_MEMORY_USED);
+		let mut most_memory_mutex = most_memory_clone.lock().expect("Failed to acquire mutex!");
+		if test_memory > most_memory_mutex.0 {
+			*most_memory_mutex = (test_memory, input.test_name.clone());
 		}
+
+		Some(())
 	});
 
 	print_output(false)
