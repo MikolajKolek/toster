@@ -63,7 +63,7 @@ pub fn init_sio2jail() -> bool {
 pub fn compile_cpp(
 	source_code_path: &Path,
 	tempdir: &TempDir,
-	compile_timeout: u64,
+	compile_timeout: Duration,
 	compile_command: &str,
 ) -> Result<(PathBuf, f64), String> {
 	let executable_file_base = source_code_path.file_stem().expect("The provided filename is invalid!");
@@ -88,7 +88,7 @@ pub fn compile_cpp(
 		Err(error) => { return Err(error.to_string()) }
 	};
 
-	match child.wait_timeout(Duration::from_secs(compile_timeout)).unwrap() {
+	match child.wait_timeout(compile_timeout).unwrap() {
 		Some(status) => {
 			if status.code().expect("The compiler returned an invalid status code") != 0 {
 				let compilation_result = fs::read_to_string(&compilation_result_path).expect("Failed to read compiler output");

@@ -1,5 +1,7 @@
 use std::path::PathBuf;
+use std::time::Duration;
 use clap::Parser;
+use crate::args::ExecuteMode::{Simple};
 
 #[derive(Parser, Debug)]
 #[command(name = "Toster", version, about = "A simple-as-toast tester for C++ solutions to competitive programming exercises\nReport issues on the bugtracker at https://github.com/MikolajKolek/toster/issues", long_about = None)]
@@ -66,4 +68,146 @@ pub struct Args {
 	/// The name of the file containing the source code or the executable you want to test
 	#[clap(value_parser)]
 	pub filename: PathBuf
+}
+
+pub(crate) enum InputConfig {
+	Directory {
+		directory: PathBuf,
+		ext: String,
+	}
+}
+
+pub(crate) enum ExecuteMode {
+	Simple,
+	#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+	Sio2Jail {
+		memory_limit: u64,
+	}
+}
+
+pub(crate) enum ActionType {
+	Generate {
+		output_directory: PathBuf,
+		output_ext: String,
+	},
+	SimpleCompare {
+		output_directory: PathBuf,
+		output_ext: String,
+	},
+	Checker {
+		path: PathBuf,
+	}
+}
+
+pub(crate) struct ParsedConfig {
+	pub(crate) source_path: PathBuf,
+	pub(crate) compile_command: String,
+	pub(crate) compile_timeout: Duration,
+	pub(crate) execute_timeout: Duration,
+	pub(crate) input: InputConfig,
+	pub(crate) execute_mode: ExecuteMode,
+	pub(crate) action_type: ActionType,
+}
+
+fn verify_compile_command(command: &str) -> Result<(), String> {
+	let message = format!(
+		"The compile command is invalid:\n{}\nRead \"toster -h\" for more info",
+		match (command.contains("<IN>"), command.contains("<OUT>")) {
+			(true, true) => return Ok(()),
+			(false, true) => "The <IN> argument is missing\n",
+			(true, false) => "The <OUT> argument is missing\n",
+			(false, false) => "The <IN> and <OUT> arguments are missing\n",
+		}
+	);
+	Err(message)
+}
+
+impl TryFrom<Args> for ParsedConfig {
+	type Error = String;
+
+	fn try_from(args: Args) -> Result<Self, String> {
+		if !args.filename.is_file() {
+			return Err("The provided file does not exist".to_string());
+		}
+
+		let (input_directory, output_directory) = match args.io {
+			Some(io) => {
+				if !io.is_dir() {
+					return Err("The input/output directory does not exist".to_string());
+				}
+				(io.clone(), io)
+			},
+			None => {
+				if !args.r#in.is_dir() {
+					return Err("The input directory does not exist".to_string());
+				}
+				(args.r#in, args.out)
+			}
+		};
+
+		verify_compile_command(&args.compile_command)?;
+
+		Ok(ParsedConfig {
+			source_path: args.filename,
+			compile_timeout: Duration::from_secs(args.compile_timeout),
+			execute_timeout: Duration::from_secs(args.timeout),
+			compile_command: args.compile_command,
+			input: InputConfig::Directory {
+				directory: input_directory,
+				ext: args.in_ext,
+			},
+
+			action_type: match (args.generate, args.checker) {
+				(true, Some(_)) => {
+					return Err("You can't have the --generate and --checker flags on at the same time.".to_string())
+				},
+				(true, None) => {
+					if output_directory.exists() && !output_directory.is_dir() {
+						return Err("Output path is not a directory".to_string())
+					}
+					ActionType::Generate {
+						output_directory,
+						output_ext: args.out_ext,
+					}
+				},
+				(false, None) => {
+					if !output_directory.is_dir() {
+						return Err("The output directory does not exist".to_string())
+					}
+					ActionType::SimpleCompare {
+						output_directory,
+						output_ext: args.out_ext,
+					}
+				},
+				(false, Some(checker_path)) => {
+					if !checker_path.is_file() {
+						return Err("The provided checker file does not exist".to_string());
+					}
+					ActionType::Checker {
+						path: checker_path,
+					}
+				}
+			},
+
+			execute_mode: {
+				#[cfg(all(target_os = "linux", target_arch = "x86_64"))] {
+					if let Some(memory_limit) = args.memory_limit {
+						ExecuteMode::Sio2Jail { memory_limit }
+					} else if args.sio2jail {
+						ExecuteMode::Sio2Jail { memory_limit: 1024 * 1204 }
+					} else {
+						Simple
+					}
+				}
+				#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+				Simple
+			}
+		})
+	}
+}
+
+impl ParsedConfig {
+	pub(crate) fn generate_mode(&self) -> bool {
+		matches!(self.action_type, ActionType::Generate { .. })
+	}
 }
