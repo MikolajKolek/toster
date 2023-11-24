@@ -1,9 +1,12 @@
 use std::cmp::Ordering;
-use colored::Colorize;
+use colored::Color::{Blue, Green, Red, Yellow};
+use colored::{Color, Colorize};
 use crate::test_result::{ExecutionError, TestResult};
 use crate::test_result::TestResult::*;
 
 pub(crate) struct TestSummary {
+    generate_mode: bool,
+
     pub(crate) total: usize,
     pub(crate) success: usize,
     pub(crate) incorrect: usize,
@@ -18,9 +21,51 @@ pub(crate) struct TestSummary {
     incorrect_test_results: Vec<TestResult>,
 }
 
+struct CountPart<'a> {
+    display_empty: bool,
+    count: usize,
+    singular: &'a str,
+    plural: &'a str,
+    color: Color,
+}
+
+impl<'a> CountPart<'a> {
+    fn new(count: usize, text: &'a str) -> Self {
+        CountPart {
+            display_empty: false,
+            count,
+            singular: text,
+            plural: text,
+            color: Red
+        }
+    }
+
+    fn with_plural(mut self, text: &'a str) -> Self {
+        self.plural = text;
+        self
+    }
+
+    fn display_empty(mut self) -> Self {
+        self.display_empty = true;
+        self
+    }
+
+    fn with_color(mut self, color: Color) -> Self {
+        self.color = color;
+        self
+    }
+
+    fn get_text(&self) -> &str {
+        if self.count == 1 { self.singular }
+        else { self.plural }
+    }
+}
+
 impl TestSummary {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(generate_mode: bool) -> Self {
         TestSummary {
+            generate_mode,
+
             total: 0,
             incorrect: 0,
             timed_out: 0,
@@ -61,32 +106,26 @@ impl TestSummary {
         }
     }
 
-    pub(crate) fn format_error_counts(&self) -> String {
-        let mut res = [
-            (self.incorrect, if self.incorrect > 1 { "wrong answers" } else { "wrong answer" }, ),
-            (self.timed_out, "timed out"),
-            (self.invalid_output, if self.invalid_output > 1 { "invalid outputs" } else { "invalid output" }),
-            (self.memory_limit_exceeded, "out of memory"),
-            (self.runtime_error, if self.runtime_error > 1 { "runtime errors" } else { "runtime error" }),
-            (self.no_output_file, if self.no_output_file > 1 { "without output files" } else { "without output file" }),
-            (self.sio2jail_error, if self.sio2jail_error > 1 { "sio2jail errors" } else { "sio2jail error" })
+    pub(crate) fn format_counts(&self, not_finished: Option<usize>) -> String {
+        [
+            CountPart::new(self.success, if self.generate_mode { "successful" } else { "correct" }).display_empty().with_color(Green),
+            CountPart::new(self.incorrect, "wrong answer").with_plural("wrong answers"),
+            CountPart::new(self.timed_out, "timed out"),
+            CountPart::new(self.invalid_output, "invalid output").with_plural("invalid outputs"),
+            CountPart::new(self.memory_limit_exceeded, "out of memory"),
+            CountPart::new(self.runtime_error, "runtime error").with_plural("runtime errors"),
+            CountPart::new(self.no_output_file, "without output file"),
+            CountPart::new(self.sio2jail_error, "sio2jail error").with_plural("sio2jail errors"),
+            CountPart::new(self.checker_error, "checker error").with_plural("checker errors").with_color(Blue),
+            CountPart::new(not_finished.unwrap_or(0), "not finished").with_color(Yellow),
         ]
             .into_iter()
-            .filter(|(count, _)| count > &0)
-            .map(|(count, label)| format!("{} {}", count.to_string().red(), label.to_string().red()))
+            .filter(|part| part.display_empty || part.count > 0)
+            .map(|part| {
+                format!("{} {}", part.count, part.get_text()).color(part.color).to_string()
+            })
             .collect::<Vec<String>>()
-            .join(", ");
-
-        if self.checker_error > 0 {
-            res += &format!(
-                "{}{}{}",
-                if res.is_empty() { "" } else { ", " },
-                self.checker_error.to_string().blue(),
-                (if self.checker_error > 1 { " checker errors" } else { " checker error" }).blue()
-            );
-        }
-
-        res
+            .join(", ")
     }
 
     pub(crate) fn get_incorrect_results(&mut self) -> &Vec<TestResult> {

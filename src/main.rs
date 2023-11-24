@@ -10,7 +10,7 @@ use std::{fs, panic, process, thread};
 use std::ffi::OsStr;
 use std::fmt::Write as FmtWrite;
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::panic::PanicInfo;
 use std::path::PathBuf;
 use std::process::Command;
@@ -62,10 +62,6 @@ fn print_output(stopped_early: bool, test_summary: &mut TestSummary) {
 	let testing_time = TIME_BEFORE_TESTING.get().unwrap().elapsed().as_secs_f64();
 	let not_tested_count = &TEST_COUNT.load(Acquire) - test_summary.total;
 
-	let error_counts = test_summary.format_error_counts();
-	let error_text = format!("{}{}", if !error_counts.is_empty() {", "} else {""}, error_counts);
-	let not_finished_text = if not_tested_count > 0 {format!(", {}", (not_tested_count.to_string() + " not finished").yellow())} else {"".to_string()};
-
 	if stopped_early {
 		println!();
 	}
@@ -79,29 +75,14 @@ fn print_output(stopped_early: bool, test_summary: &mut TestSummary) {
 	// 	)
 	// }
 
-	// Printing the output
-	match GENERATE.load(Acquire) {
-		true => {
-			println!("Generation {} {:.2}s{}\nResults: {}{}{}",
-			         if stopped_early {"stopped after"} else {"finished in"},
-			         testing_time,
-			         additional_info,
-			         format!("{} successful", test_summary.success).green(),
-			         error_text,
-			         not_finished_text
-			);
-		}
-		false => {
-			println!("Testing {} {:.2}s{}\nResults: {}{}{}",
-			         if stopped_early {"stopped after"} else {"finished in"},
-			         testing_time,
-			         additional_info,
-			         format!("{} correct", test_summary.success).green(),
-			         error_text,
-			         not_finished_text
-			);
-		}
-	}
+	println!(
+		"{} {} {:.2}s{}\nResults: {}",
+        if GENERATE.load(Acquire) { "Generating" } else { "Testing" },
+        if stopped_early {"stopped after"} else {"finished in"},
+        testing_time,
+        additional_info,
+        test_summary.format_counts(Some(not_tested_count)),
+	);
 
 	let incorrect_results=  test_summary.get_incorrect_results();
 	if !incorrect_results.is_empty() {
@@ -146,7 +127,12 @@ fn check_ctrlc() -> Option<()> {
 fn main() {
 	setup_panic();
 
-	let mut test_summary = Arc::new(Mutex::new(TestSummary::new()));
+    let args = Args::parse();
+    GENERATE.store(args.generate, Release);
+    let input_dir = args.io.as_ref().unwrap_or(&args.r#in);
+    let output_dir = args.io.as_ref().unwrap_or(&args.out);
+
+	let mut test_summary = Arc::new(Mutex::new(TestSummary::new(args.generate)));
 
 	let test_summary_1 = test_summary.clone();
 	ctrlc::set_handler(move || {
@@ -156,11 +142,6 @@ fn main() {
 
 	let tempdir = tempdir().expect("Failed to create temporary directory!");
 	fill_tempfile_pool(&tempdir);
-
-	let args = Args::parse();
-	GENERATE.store(args.generate, Release);
-	let input_dir = args.io.as_ref().unwrap_or(&args.r#in);
-	let output_dir = args.io.as_ref().unwrap_or(&args.out);
 
 	#[allow(unused_assignments)]
 	let mut sio2jail = false;
@@ -292,18 +273,13 @@ fn main() {
 
 	// Progress bar styling
 	let test_summary_2 = test_summary.clone();
-	let test_summary_3 = test_summary.clone();
-	let style: ProgressStyle = ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{correct} {incorrect} {ctrlc}")
+	let style: ProgressStyle = ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{counts} {ctrlc}")
 		.expect("Progress bar creation failed!")
 		.with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed!"))
 		.progress_chars("#>-")
-		.with_key("correct", move |_state: &ProgressState, w: &mut dyn FmtWrite| {
-			let success_counts = test_summary_2.lock().expect("Failed to lock test summary mutex").success;
-			write!(w, "{}", format!("{} {}", &success_counts, if GENERATE.load(Acquire) { "successful" } else { if success_counts != 1 { "correct answers" } else { "correct answer" } }).green()).expect("Displaying the progress bar failed!")
+		.with_key("counts", move |_state: &ProgressState, w: &mut dyn FmtWrite| {
+            write!(w, "{}", test_summary_2.lock().expect("Failed to lock test summary mutex").format_counts(None)).expect("Displaying the progress bar failed!")
 		})
-		.with_key("incorrect", move |_state: &ProgressState, w: &mut dyn FmtWrite|
-			write!(w, "{}", test_summary_3.lock().expect("Failed to lock test summary mutex").format_error_counts()).expect("Displaying the progress bar failed!")
-		)
 		.with_key("ctrlc", |_state: &ProgressState, w: &mut dyn FmtWrite|
 			write!(w, "{}", "(Press Ctrl+C to stop testing and print current results)".bright_black()).expect("Displaying the progress bar Ctrl+C message failed!")
 		);

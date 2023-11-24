@@ -1,5 +1,5 @@
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
 use std::{io, thread};
 use std::time::{Duration, Instant};
@@ -21,9 +21,9 @@ impl BasicTestRunner {
     fn map_status_code(status: &ExitStatus) -> Result<(), ExecutionError> {
         match status.code() {
             Some(0) => Ok(()),
-            Some(exit_code) => (
+            Some(exit_code) => {
                 Err(RuntimeError(format!("- the program returned a non-zero return code: {}", exit_code)))
-            ),
+            },
             None => {
                 #[cfg(all(unix))]
                 if cfg!(unix) && status.signal().expect("The program returned an invalid status code!") == 2 {
