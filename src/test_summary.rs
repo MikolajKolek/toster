@@ -23,7 +23,7 @@ pub(crate) struct TestSummary {
     test_errors: Vec<(String, TestError)>,
 
     pub(crate) slowest_test: Option<(Duration, String)>,
-    pub(crate) most_memory_used: Option<(i64, String)>,
+    pub(crate) most_memory_used: Option<(u64, String)>,
 }
 
 struct CountPart<'a> {
@@ -97,24 +97,26 @@ impl TestSummary {
 
     pub(crate) fn add_test_error(&mut self, error: TestError, test_name: String) {
         self.total += 1;
-        match error {
+        match &error {
             Incorrect { .. } => { self.incorrect += 1 }
             ProgramError { error: ExecutionError::TimedOut, .. } => { self.timed_out += 1 }
             ProgramError { error: ExecutionError::MemoryLimitExceeded, .. } => { self.memory_limit_exceeded += 1 }
             ProgramError { error: ExecutionError::RuntimeError(_), .. } => { self.runtime_error += 1 }
             ProgramError { error: ExecutionError::Sio2jailError(_), .. } => { self.sio2jail_error += 1 }
             ProgramError { error: ExecutionError::IncorrectCheckerFormat(_), .. } => { self.checker_error += 1 }
-            ProgramError { error: ExecutionError::OutputStreamError } => { self.invalid_output += 1 }
+            ProgramError { error: ExecutionError::PipeError } => { self.invalid_output += 1 }
+            ProgramError { error: ExecutionError::OutputNotUtf8 } => { self.invalid_output += 1 }
             CheckerError { .. } => { self.checker_error += 1 }
             NoOutputFile { .. } => { self.no_output_file += 1 }
-            OutputNotUtf8 => { self.invalid_output += 1 }
         }
         self.test_errors.push((test_name, error));
     }
 
     fn add_metrics(&mut self, metrics: &ExecutionMetrics, test_name: &str) {
-        if self.slowest_test.is_none_or(|(time, _)| &metrics.time > time) {
-            self.slowest_test = Some((metrics.time, test_name.to_string()));
+        if let Some(new_time) = &metrics.time {
+            if self.slowest_test.is_none_or(|(time, _)| new_time > time) {
+                self.slowest_test = Some((*new_time, test_name.to_string()));
+            }
         }
 
         if let Some(new_memory) = &metrics.memory_kilobytes {

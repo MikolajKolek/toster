@@ -1,7 +1,5 @@
-use std::io::Read;
-use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
-use std::{io, thread};
+use std::path::PathBuf;
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 use wait_timeout::ChildExt;
 use crate::prepare_input::TestInputSource;
@@ -10,22 +8,20 @@ use crate::test_errors::{ExecutionError, ExecutionMetrics};
 
 #[cfg(all(unix))]
 use std::os::unix::process::ExitStatusExt;
-use std::thread::JoinHandle;
+#[cfg(all(unix))]
+use std::thread;
+use crate::pipes::BufferedPipe;
 
-pub(crate) struct BasicTestRunner {
+pub(crate) struct SimpleTestRunner {
     pub(crate) timeout: Duration,
     pub(crate) executable_path: PathBuf,
 }
 
-struct StreamError(io::Error);
-
-impl From<io::Error> for StreamError {
-    fn from(value: io::Error) -> Self {
-        StreamError(value)
-    }
+pub(crate) trait TestRunner: Sync + Send {
+    fn test_to_string(&self, input_source: &TestInputSource) -> (ExecutionMetrics, Result<String, ExecutionError>);
 }
 
-impl BasicTestRunner {
+impl SimpleTestRunner {
     fn map_status_code(status: &ExitStatus) -> Result<(), ExecutionError> {
         match status.code() {
             Some(0) => Ok(()),
@@ -50,27 +46,18 @@ impl BasicTestRunner {
 
         match status {
             Some(status) => (
-                ExecutionMetrics { time: start_time.elapsed(), memory_kilobytes: None },
-                BasicTestRunner::map_status_code(&status)
+                ExecutionMetrics { time: Some(start_time.elapsed()), memory_kilobytes: None },
+                SimpleTestRunner::map_status_code(&status)
             ),
             None => {
                 child.kill().unwrap();
-                (ExecutionMetrics { time: self.timeout, memory_kilobytes: None }, Err(TimedOut))
+                (ExecutionMetrics { time: Some(self.timeout), memory_kilobytes: None }, Err(TimedOut))
             }
         }
     }
+}
 
-    fn read_output_async(stream: &mut Option<ChildStdout>) -> JoinHandle<Result<Vec<u8>, StreamError>> {
-        let stream = stream.take();
-        thread::spawn(|| -> Result<Vec<u8>, StreamError> {
-            let mut buffer: Vec<u8> = Vec::new();
-            if let Some(mut stream) = stream {
-                stream.read_to_end(&mut buffer)?;
-            }
-            return Ok(buffer)
-        })
-    }
-
+impl TestRunner for SimpleTestRunner {
     // pub fn test_to_file(&self, input_source: &TestInputSource, output_path: &Path) -> (ExecutionMetrics, Result<(), ExecutionError>) {
     //     let child = Command::new(&self.executable_path)
     //         .stdin(input_source.get_stdin())
@@ -80,16 +67,17 @@ impl BasicTestRunner {
     //     self.wait_for_child(child)
     // }
 
-    pub fn test_to_vec(&self, input_source: &TestInputSource) -> (ExecutionMetrics, Result<Vec<u8>, ExecutionError>) {
-        let mut child = Command::new(&self.executable_path)
+    fn test_to_string(&self, input_source: &TestInputSource) -> (ExecutionMetrics, Result<String, ExecutionError>) {
+        let mut stdout = BufferedPipe::create().expect("Failed to create stdout pipe");
+
+        let child = Command::new(&self.executable_path)
             .stdin(input_source.get_stdin())
-            .stdout(Stdio::piped())
+            .stdout(stdout.get_stdio())
             .stderr(Stdio::null())
             .spawn().expect("Failed to spawn child");
-        let output_handle = BasicTestRunner::read_output_async(&mut child.stdout);
 
         let (metrics, result) = self.wait_for_child(child);
-        let output = output_handle.join().expect("Output thread panicked");
-        (metrics, result.and_then(|_| output.map_err(|_| ExecutionError::OutputStreamError)))
+        let output = stdout.join();
+        (metrics, result.and_then(|_| output))
     }
 }

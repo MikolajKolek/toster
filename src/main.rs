@@ -5,8 +5,11 @@ mod prepare_input;
 mod run;
 mod generic_utils;
 mod test_summary;
+mod pipes;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+mod sio2jail;
 
-use std::{fs, panic, process, thread};
+use std::{fs, panic, thread};
 use std::ffi::OsStr;
 use std::fmt::Write as FmtWrite;
 use std::panic::PanicInfo;
@@ -26,11 +29,15 @@ use tempfile::tempdir;
 use args::Args;
 use crate::args::ActionType::{Checker, Generate};
 use crate::args::{ActionType, InputConfig, ParsedConfig};
+use crate::args::ExecuteMode::*;
 use crate::prepare_input::prepare_file_inputs;
-use crate::run::BasicTestRunner;
+use crate::run::{SimpleTestRunner, TestRunner};
 use crate::test_errors::TestError::ProgramError;
 use crate::test_summary::TestSummary;
-use crate::testing_utils::{compare_output, compile_cpp, fill_tempfile_pool, init_sio2jail};
+use crate::testing_utils::{compare_output, compile_cpp};
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+use crate::sio2jail::Sio2jailRunner;
 
 static TIME_BEFORE_TESTING: OnceLock<Instant> = OnceLock::new();
 static TEST_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -42,7 +49,7 @@ static PANICKING: AtomicBool = AtomicBool::new(false);
 fn print_output(stopped_early: bool, test_summary: &mut TestSummary) {
 	if TIME_BEFORE_TESTING.get().is_none() {
 		println!("{}", "Toster was stopped before testing could start".red());
-		process::exit(0);
+		exit(0);
 	}
 
 	let testing_time = TIME_BEFORE_TESTING.get().unwrap().elapsed().as_secs_f64();
@@ -83,7 +90,7 @@ fn print_output(stopped_early: bool, test_summary: &mut TestSummary) {
 		}
 	}
 
-	process::exit(0);
+	exit(0);
 }
 
 fn setup_panic() {
@@ -98,7 +105,7 @@ fn setup_panic() {
 
 					let file_path = handle_dump(&meta, info);
 					print_msg(file_path, &meta).expect("human-panic: printing error message to console failed");
-					process::exit(0);
+					exit(0);
 				}
 				else {
 					thread::sleep(Duration::from_secs(u64::MAX));
@@ -139,11 +146,6 @@ fn main() {
 	}
 
 	let tempdir = tempdir().expect("Failed to create temporary directory!");
-	fill_tempfile_pool(&tempdir);
-
-	// if sio2jail && !init_sio2jail() {
-	// 	return;
-	// }
 
 	if let Generate { output_directory, .. } = &config.action_type {
 		if !output_directory.is_dir() {
@@ -211,6 +213,28 @@ fn main() {
 		None
 	};
 
+	let runner: Box<dyn TestRunner> = match config.execute_mode {
+		Simple => Box::new(SimpleTestRunner {
+			executable_path: executable,
+			timeout: config.execute_timeout,
+		}),
+		#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+		Sio2jail { memory_limit } => {
+			let runner = Sio2jailRunner::init(
+				config.execute_timeout,
+				executable,
+				memory_limit,
+			);
+			match runner {
+				Ok(runner) => Box::new(runner),
+				Err(error) => {
+					println!("{}", error.red());
+					exit(1);
+				}
+			}
+		},
+	};
+
 	// Progress bar styling
     let style: ProgressStyle = {
         let test_summary = test_summary.clone();
@@ -260,18 +284,13 @@ fn main() {
 		// }
 	// }
 
-	let runner = BasicTestRunner {
-		executable_path: executable,
-		timeout: config.execute_timeout,
-	};
-
 	// Running tests / generating output
 	TIME_BEFORE_TESTING.set(Instant::now()).expect("Couldn't store timestamp before testing!");
 	let progress_bar = ProgressBar::new(inputs.test_count as u64).with_style(style);
 	inputs.iterator.progress_with(progress_bar).try_for_each(|input| -> Option<()> {
 		debug_assert!(!RECEIVED_CTRL_C.load(Acquire), "Test started after CTRL+C has been pressed");
 
-		let (metrics, output) = runner.test_to_vec(&input.input_source);
+		let (metrics, output) = runner.test_to_string(&input.input_source);
 		check_ctrlc()?;
 
 		let output = match output {
@@ -292,7 +311,7 @@ fn main() {
 			},
 			ActionType::SimpleCompare { output_directory, output_ext } => {
 				let output_file_path = output_directory.join(format!("{}{}", input.test_name, output_ext));
-				if let Err(error) = compare_output(&output_file_path, output) {
+				if let Err(error) = compare_output(&output_file_path, &output) {
 					test_summary.lock().expect("Failed to lock test summary mutex")
 						.add_test_error(error, input.test_name);
 					return Some(());

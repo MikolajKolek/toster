@@ -23,42 +23,8 @@ use once_cell::sync::Lazy;
 use tempfile::TempDir;
 use terminal_size::{Height, Width};
 use wait_timeout::ChildExt;
-use crate::prepare_input::TestInputSource;
-use crate::test_errors::{ExecutionError, ExecutionMetrics, TestError};
-use crate::test_errors::ExecutionError::{RuntimeError, TimedOut};
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-use crate::test_errors::ExecutionError::{MemoryLimitExceeded, Sio2jailError};
-use crate::test_errors::TestError::{Incorrect, NoOutputFile, OutputNotUtf8};
-
-static SIO2JAIL_PATH: OnceLock<PathBuf> = OnceLock::new();
-static TEMPFILE_POOL: Lazy<ArrayQueue<PathBuf>> = Lazy::new(|| { ArrayQueue::new(num_cpus::get() * 10) });
-
-pub fn fill_tempfile_pool(tempdir: &TempDir) {
-	for i in 0..(num_cpus::get() * 10) {
-		let file_path = tempdir.path().join(format!("tempfile-{}", i));
-		TEMPFILE_POOL.push(file_path).expect("Couldn't push into tempfile pool");
-	}
-}
-
-pub fn init_sio2jail() -> bool {
-	let Some(binding) = BaseDirs::new() else {
-		println!("{}", "No valid home directory path could be retrieved from the operating system. Sio2jail could not be found".red());
-		return false;
-	};
-	let Some(executable_dir) = binding.executable_dir() else {
-		println!("{}", "Couldn't locate the user's executable directory. Sio2jail could not be found".red());
-		return false;
-	};
-
-	let result = executable_dir.join("sio2jail");
-	if !result.exists() {
-		println!("{}{}", "Sio2jail could not be found at ".red(), result.display().to_string().red());
-		return false;
-	}
-
-	SIO2JAIL_PATH.get_or_init(|| result);
-	return true;
-}
+use crate::test_errors::TestError;
+use crate::test_errors::TestError::{Incorrect, NoOutputFile};
 
 pub fn compile_cpp(
 	source_code_path: &Path,
@@ -316,14 +282,11 @@ pub fn compile_cpp(
 // 	}
 // }
 
-pub(crate) fn compare_output(expected_output_path: &Path, actual_output: Vec<u8>) -> Result<(), TestError> {
+pub(crate) fn compare_output(expected_output_path: &Path, actual_output: &str) -> Result<(), TestError> {
 	if !expected_output_path.is_file() {
 		return Err(NoOutputFile);
 	}
 	let expected_output = fs::read_to_string(expected_output_path).expect("Failed to read output file!");
-	let Ok(actual_output) = String::from_utf8(actual_output) else {
-		return Err(OutputNotUtf8);
-	};
 
 	let expected_output = split_trim_end(&expected_output);
 	let actual_output = split_trim_end(&actual_output);

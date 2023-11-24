@@ -80,7 +80,7 @@ pub(crate) enum InputConfig {
 pub(crate) enum ExecuteMode {
 	Simple,
 	#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-	Sio2Jail {
+	Sio2jail {
 		memory_limit: u64,
 	}
 }
@@ -192,9 +192,9 @@ impl TryFrom<Args> for ParsedConfig {
 			execute_mode: {
 				#[cfg(all(target_os = "linux", target_arch = "x86_64"))] {
 					if let Some(memory_limit) = args.memory_limit {
-						ExecuteMode::Sio2Jail { memory_limit }
+						ExecuteMode::Sio2jail { memory_limit }
 					} else if args.sio2jail {
-						ExecuteMode::Sio2Jail { memory_limit: 1024 * 1204 }
+						ExecuteMode::Sio2jail { memory_limit: 1024 * 1204 }
 					} else {
 						Simple
 					}

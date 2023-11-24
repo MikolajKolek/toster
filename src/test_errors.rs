@@ -2,8 +2,13 @@ use std::time::Duration;
 use colored::Colorize;
 
 pub struct ExecutionMetrics {
-	pub(crate) memory_kilobytes: Option<i64>,
-	pub(crate) time: Duration,
+	pub(crate) memory_kilobytes: Option<u64>,
+	pub(crate) time: Option<Duration>,
+}
+
+impl ExecutionMetrics {
+	#[allow(dead_code)]
+	pub const NONE: ExecutionMetrics = ExecutionMetrics { memory_kilobytes: None, time: None };
 }
 
 pub enum TestError {
@@ -17,7 +22,6 @@ pub enum TestError {
 		error: ExecutionError
 	},
 	NoOutputFile,
-	OutputNotUtf8,
 }
 
 #[allow(unused)]
@@ -26,7 +30,8 @@ pub enum ExecutionError {
 	MemoryLimitExceeded,
 	RuntimeError(String),
 	Sio2jailError(String),
-	OutputStreamError,
+	PipeError,
+	OutputNotUtf8,
 	IncorrectCheckerFormat(String)
 }
 
@@ -51,10 +56,6 @@ impl TestError {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
 				result.push_str(&format!("{}", "Output file does not exist".red()));
 			}
-			TestError::OutputNotUtf8 => {
-				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
-				result.push_str(&format!("{}", "The output contained invalid characters".red()));
-			}
 		}
 
 		return result;
@@ -69,7 +70,8 @@ impl ExecutionError {
 			ExecutionError::RuntimeError(error) => format!("Runtime error {}", error),
 			ExecutionError::Sio2jailError(error) => format!("Sio2jail error: {}", error),
 			ExecutionError::IncorrectCheckerFormat(error) => format!("The checker output didn't follow the Toster checker format - {}", error),
-			ExecutionError::OutputStreamError => "Failed to read program output".to_string(),
+			ExecutionError::PipeError => "Failed to read program output".to_string(),
+			ExecutionError::OutputNotUtf8 => "The output contained invalid characters".to_string(),
 		};
 	}
 }
