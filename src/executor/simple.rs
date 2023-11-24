@@ -1,27 +1,24 @@
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
+use crate::test_errors::{ExecutionError, ExecutionMetrics};
 use wait_timeout::ChildExt;
+use crate::executor::TestExecutor;
+use crate::pipes::BufferedPipe;
 use crate::prepare_input::TestInputSource;
 use crate::test_errors::ExecutionError::{RuntimeError, TimedOut};
-use crate::test_errors::{ExecutionError, ExecutionMetrics};
 
 #[cfg(all(unix))]
 use std::os::unix::process::ExitStatusExt;
 #[cfg(all(unix))]
 use std::thread;
-use crate::pipes::BufferedPipe;
 
-pub(crate) struct SimpleTestRunner {
+pub(crate) struct SimpleExecutor {
     pub(crate) timeout: Duration,
     pub(crate) executable_path: PathBuf,
 }
 
-pub(crate) trait TestRunner: Sync + Send {
-    fn test_to_string(&self, input_source: &TestInputSource) -> (ExecutionMetrics, Result<String, ExecutionError>);
-}
-
-impl SimpleTestRunner {
+impl SimpleExecutor {
     fn map_status_code(status: &ExitStatus) -> Result<(), ExecutionError> {
         match status.code() {
             Some(0) => Ok(()),
@@ -30,7 +27,7 @@ impl SimpleTestRunner {
             },
             None => {
                 #[cfg(all(unix))]
-                if cfg!(unix) && status.signal().expect("The program returned an invalid status code!") == 2 {
+                if status.signal().expect("The program returned an invalid status code!") == 2 {
                     // TODO: Implement better
                     thread::sleep(Duration::from_secs(u64::MAX));
                 }
@@ -47,7 +44,7 @@ impl SimpleTestRunner {
         match status {
             Some(status) => (
                 ExecutionMetrics { time: Some(start_time.elapsed()), memory_kilobytes: None },
-                SimpleTestRunner::map_status_code(&status)
+                SimpleExecutor::map_status_code(&status)
             ),
             None => {
                 child.kill().unwrap();
@@ -57,7 +54,7 @@ impl SimpleTestRunner {
     }
 }
 
-impl TestRunner for SimpleTestRunner {
+impl TestExecutor for SimpleExecutor {
     // pub fn test_to_file(&self, input_source: &TestInputSource, output_path: &Path) -> (ExecutionMetrics, Result<(), ExecutionError>) {
     //     let child = Command::new(&self.executable_path)
     //         .stdin(input_source.get_stdin())

@@ -2,12 +2,10 @@ mod args;
 mod test_errors;
 mod testing_utils;
 mod prepare_input;
-mod run;
+mod executor;
 mod generic_utils;
 mod test_summary;
 mod pipes;
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-mod sio2jail;
 
 use std::{fs, panic, thread};
 use std::ffi::OsStr;
@@ -30,14 +28,13 @@ use args::Args;
 use crate::args::ActionType::{Checker, Generate};
 use crate::args::{ActionType, InputConfig, ParsedConfig};
 use crate::args::ExecuteMode::*;
+use crate::executor::simple::SimpleExecutor;
+use crate::executor::sio2jail::Sio2jailExecutor;
 use crate::prepare_input::prepare_file_inputs;
-use crate::run::{SimpleTestRunner, TestRunner};
+use crate::executor::TestExecutor;
 use crate::test_errors::TestError::ProgramError;
 use crate::test_summary::TestSummary;
 use crate::testing_utils::{compare_output, compile_cpp};
-
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-use crate::sio2jail::Sio2jailRunner;
 
 static TIME_BEFORE_TESTING: OnceLock<Instant> = OnceLock::new();
 static TEST_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -213,14 +210,14 @@ fn main() {
 		None
 	};
 
-	let runner: Box<dyn TestRunner> = match config.execute_mode {
-		Simple => Box::new(SimpleTestRunner {
+	let runner: Box<dyn TestExecutor> = match config.execute_mode {
+		Simple => Box::new(SimpleExecutor {
 			executable_path: executable,
 			timeout: config.execute_timeout,
 		}),
 		#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 		Sio2jail { memory_limit } => {
-			let runner = Sio2jailRunner::init(
+			let runner = Sio2jailExecutor::init(
 				config.execute_timeout,
 				executable,
 				memory_limit,
@@ -273,7 +270,7 @@ fn main() {
 		// let (test_result, _) = run_test(&true_command_location, None, &test_input_path, &output_dir, &random_test_name, &args.out_ext, &( 1u64), true, 0);
 		// if let ProgramError { error: ExecutionError::Sio2jailError(error), .. } = test_result {
 		// 	if error == "Exception occurred: System error occured: perf event open failed: Permission denied: error 13: Permission denied\n" {
-		// 		println!("{}", "You need to run the following command to use toster with sio2jail. You may also put this option in your /etc/sysctl.conf. This will make the setting persist across reboots.".red());
+		// 		println!("{}", "You need to executor the following command to use toster with sio2jail. You may also put this option in your /etc/sysctl.conf. This will make the setting persist across reboots.".red());
 		// 		println!("{}", "sudo sysctl -w kernel.perf_event_paranoid=-1".bright_black().italic());
 		// 	}
 		// 	else {

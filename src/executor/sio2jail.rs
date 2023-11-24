@@ -8,11 +8,11 @@ use directories::BaseDirs;
 use wait_timeout::ChildExt;
 use crate::pipes::BufferedPipe;
 use crate::prepare_input::TestInputSource;
-use crate::run::TestRunner;
+use crate::executor::TestExecutor;
 use crate::test_errors::{ExecutionError, ExecutionMetrics};
 use crate::test_errors::ExecutionError::{MemoryLimitExceeded, RuntimeError, Sio2jailError, TimedOut};
 
-pub(crate) struct Sio2jailRunner {
+pub(crate) struct Sio2jailExecutor {
     timeout: Duration,
     executable_path: PathBuf,
     sio2jail_path: PathBuf,
@@ -34,9 +34,9 @@ fn get_sio2jail_path() -> Result<PathBuf, String> {
     Ok(result)
 }
 
-impl Sio2jailRunner {
-    pub(crate) fn init(timeout: Duration, executable_path: PathBuf, memory_limit: u64) -> Result<Sio2jailRunner, String> {
-        Ok(Sio2jailRunner {
+impl Sio2jailExecutor {
+    pub(crate) fn init(timeout: Duration, executable_path: PathBuf, memory_limit: u64) -> Result<Sio2jailExecutor, String> {
+        Ok(Sio2jailExecutor {
             timeout,
             memory_limit,
             executable_path,
@@ -45,7 +45,7 @@ impl Sio2jailRunner {
     }
 }
 
-impl TestRunner for Sio2jailRunner {
+impl TestExecutor for Sio2jailExecutor {
     fn test_to_string(&self, input_source: &TestInputSource) -> (ExecutionMetrics, Result<String, ExecutionError>) {
         let sio2jail_output = BufferedPipe::create().expect("Failed to create sio2jail output pipe");
         let mut stdout = BufferedPipe::create().expect("Failed to create stdout pipe");
@@ -60,7 +60,7 @@ impl TestRunner for Sio2jailRunner {
             .stdout(stdout.get_stdio())
             .stderr(stderr.get_stdio())
             .stdin(input_source.get_stdin())
-            .spawn().expect("Failed to run file!");
+            .spawn().expect("Failed to executor file!");
 
         let status = child.wait_timeout(self.timeout).unwrap();
         let Some(status) = status else {

@@ -98,7 +98,7 @@ pub fn compile_cpp(
 // 		}
 // 	}
 //
-// 	let mut child = command.spawn().expect("Failed to run file!");
+// 	let mut child = command.spawn().expect("Failed to executor file!");
 //
 // 	let status = child.wait_timeout(Duration::from_secs(*timeout)).unwrap();
 // 	let Some(status) = status else {
@@ -169,7 +169,7 @@ pub fn compile_cpp(
 // 		.stdout(checker_output_file)
 // 		.stdin(checker_input_file_readable)
 // 		.spawn()
-// 		.expect("Failed to run checker!");
+// 		.expect("Failed to executor checker!");
 //
 // 	return match child.wait_timeout(Duration::from_secs(*timeout)).unwrap() {
 // 		Some(status) => {
