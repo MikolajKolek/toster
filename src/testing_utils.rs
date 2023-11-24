@@ -2,13 +2,13 @@ use std::cmp::max;
 use std::fs;
 use std::fs::File;
 use std::io::ErrorKind::NotFound;
-use std::io::{Write};
+use std::io::{Stdout, Write};
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use std::os::fd::AsRawFd;
 #[cfg(all(unix))]
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{ChildStdout, Command, Stdio};
 use std::sync::OnceLock;
 #[cfg(all(unix))]
 use std::thread;
@@ -25,7 +25,9 @@ use tempfile::TempDir;
 use terminal_size::{Height, Width};
 use wait_timeout::ChildExt;
 use crate::{Correct, ProgramError, Incorrect, TestResult};
-use crate::test_result::{ExecutionError, ExecutionResult};
+use crate::prepare_input::{Test, TestInputSource};
+use crate::run::BasicTestRunner;
+use crate::test_result::{ExecutionError, ExecutionMetrics};
 use crate::test_result::ExecutionError::{InvalidOutput, RuntimeError, TimedOut, IncorrectCheckerFormat};
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use crate::test_result::ExecutionError::{MemoryLimitExceeded, Sio2jailError};
@@ -107,52 +109,10 @@ pub fn compile_cpp(
 	Ok((executable_path, compilation_time))
 }
 
-pub fn generate_output_default(
-	executable_path: &Path,
-	input_file: File,
-	output_file: File,
-	timeout: &u64,
-) -> (ExecutionResult, Result<(), ExecutionError>) {
-	let time_before_run = Instant::now();
-	let mut child = Command::new(executable_path)
-		.stdout(output_file)
-		.stdin(input_file)
-		.spawn()
-		.expect("Failed to run file!");
-
-	match child.wait_timeout(Duration::from_secs(*timeout)).unwrap() {
-		Some(status) => match status.code() {
-			Some(0) => (
-				ExecutionResult { time_seconds: time_before_run.elapsed().as_secs_f64(), memory_kilobytes: None },
-				Ok(())
-			),
-			Some(exit_code) => (
-				ExecutionResult { time_seconds: time_before_run.elapsed().as_secs_f64(), memory_kilobytes: None },
-				Err(RuntimeError(format!("- the program returned a non-zero return code: {}", exit_code)))
-			),
-			None => {
-				#[cfg(all(unix))]
-				if cfg!(unix) && status.signal().expect("The program returned an invalid status code!") == 2 {
-					thread::sleep(Duration::from_secs(u64::MAX));
-				}
-
-				(
-					ExecutionResult { time_seconds: time_before_run.elapsed().as_secs_f64(), memory_kilobytes: None },
-					Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", status.to_string())))
-				)
-			},
-		},
-		None => {
-			child.kill().unwrap();
-			(ExecutionResult { time_seconds: *timeout as f64, memory_kilobytes: None }, Err(TimedOut))
-		}
-	}
-}
-
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn generate_output_sio2jail(
 	executable_path: &Path,
-	input_file: File,
+	input_source: &TestInputSource,
 	output_file: File,
 	timeout: &u64,
 	memory_limit: &u64,
@@ -160,38 +120,43 @@ pub fn generate_output_sio2jail(
 	sio2jail_output_file: File,
 	error_file_path: &Path,
 	error_file: File
-) -> (ExecutionResult, Result<(), ExecutionError>) {
-	let mut child = Command::new(SIO2JAIL_PATH.get().expect("Sio2jail was not properly initialized!"))
+) -> (ExecutionMetrics, Result<(), ExecutionError>) {
+	let mut command = Command::new(SIO2JAIL_PATH.get().expect("Sio2jail was not properly initialized!"))
 		.args(["-f", "3", "-o", "oiaug", "--mount-namespace", "off", "--pid-namespace", "off", "--uts-namespace", "off", "--ipc-namespace", "off", "--net-namespace", "off", "--capability-drop", "off", "--user-namespace", "off", "-s", "-m", &memory_limit.to_string(), "--", executable_path ])
 		.fd_mappings(vec![FdMapping {
 			parent_fd: sio2jail_output_file.as_raw_fd(),
 			child_fd: 3
 		}]).expect("Failed to redirect file descriptor 3!")
 		.stdout(output_file)
-		.stdin(input_file)
-		.stderr(error_file)
-		.spawn()
-		.expect("Failed to run file!");
+		.stderr(error_file);
+
+	match input_source {
+		TestInputSource::File(path) => {
+			command.stdin(path);
+		}
+	}
+
+	let mut child = command.spawn().expect("Failed to run file!");
 
 	let status = child.wait_timeout(Duration::from_secs(*timeout)).unwrap();
 	let Some(status) = status else {
 		child.kill().unwrap();
-		return (ExecutionResult { time_seconds: *timeout as f64, memory_kilobytes: None }, Err(TimedOut));
+		return (ExecutionMetrics { time_seconds: *timeout as f64, memory_kilobytes: None }, Err(TimedOut));
 	};
 
 	let error_output = fs::read_to_string(error_file_path).expect("Couldn't read sio2jail error output");
 	if !error_output.is_empty() {
 		return if error_output == "terminate called after throwing an instance of 'std::bad_alloc'\n  what():  std::bad_alloc\n" {
-			(ExecutionResult { time_seconds: 0f64, memory_kilobytes: Some(*memory_limit as i64) }, Err(MemoryLimitExceeded))
+			(ExecutionMetrics { time_seconds: 0f64, memory_kilobytes: Some(*memory_limit as i64) }, Err(MemoryLimitExceeded))
 		} else {
-			(ExecutionResult { time_seconds: 0f64, memory_kilobytes: None }, Err(Sio2jailError(error_output)))
+			(ExecutionMetrics { time_seconds: 0f64, memory_kilobytes: None }, Err(Sio2jailError(error_output)))
 		}
 	}
 
 	let sio2jail_output = fs::read_to_string(sio2jail_output_file_path).expect("Couldn't read temporary sio2jail file");
 	let split: Vec<&str> = sio2jail_output.split_whitespace().collect();
 	if split.len() < 6 {
-		return (ExecutionResult { time_seconds: 0f64, memory_kilobytes: None }, Err(Sio2jailError(format!("The sio2jail output is too short: {}", sio2jail_output))));
+		return (ExecutionMetrics { time_seconds: 0f64, memory_kilobytes: None }, Err(Sio2jailError(format!("The sio2jail output is too short: {}", sio2jail_output))));
 	}
 	let sio2jail_status = split[0];
 	let time_seconds = split[2].parse::<f64>().expect("Sio2jail returned an invalid runtime in the output") / 1000.0;
@@ -205,15 +170,15 @@ pub fn generate_output_sio2jail(
 				thread::sleep(Duration::from_secs(u64::MAX));
 			}
 
-			return (ExecutionResult { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, Err(RuntimeError(format!    ("- the process was terminated with the following error:\n{}", status.to_string()))))
+			return (ExecutionMetrics { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, Err(RuntimeError(format!    ("- the process was terminated with the following error:\n{}", status.to_string()))))
 		}
 		Some(0) => {}
 		Some(exit_code) => {
-			return (ExecutionResult { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, Err(Sio2jailError(format!("Sio2jail returned an invalid status code: {}", exit_code))) );
+			return (ExecutionMetrics { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, Err(Sio2jailError(format!("Sio2jail returned an invalid status code: {}", exit_code))) );
 		}
 	}
 
-	return (ExecutionResult { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, match sio2jail_status {
+	return (ExecutionMetrics { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, match sio2jail_status {
 		"OK" => Ok(()),
 		"RE" | "RV" => Err(RuntimeError(error_message.and_then(|message| Some(format!("- {}", message))).unwrap_or(String::new()))),
 		"TLE" => Err(TimedOut),
@@ -226,7 +191,7 @@ pub fn generate_output_sio2jail(
 pub fn checker_verify(
 	test_name: &str,
 	checker_path: &Path,
-	program_input: &str,
+	input_source: &TestInputSource,
 	program_output: &str,
 	checker_input_file_path: &Path,
 	mut checker_input_file: File,
@@ -282,47 +247,48 @@ pub fn checker_verify(
 pub fn run_test(
 	executable_path: &Path,
 	checker_path: Option<&Path>,
-	input_file_path: &Path,
+	input_source: &TestInputSource,
 	output_dir: &Path,
 	test_name: &str,
 	out_extension: &str,
-	timeout: &u64,
+	timeout: &Duration,
 	_use_sio2jail: bool,
 	_memory_limit: u64,
-) -> (TestResult, ExecutionResult) {
-	let input_file = File::open(input_file_path).expect("Failed to open input file!");
-
-	let test_output_file_path = TEMPFILE_POOL.pop().expect("Couldn't acquire tempfile!");
-	let test_output_file = File::create(&test_output_file_path).expect("Failed to create temporary file!");
+) -> (TestResult, ExecutionMetrics) {
+	let test_runner = BasicTestRunner {
+		timeout: timeout.clone(),
+		executable_path: executable_path.to_path_buf(),
+	};
 
 	#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-	let (execution_result, execution_error) = if _use_sio2jail {
-		let sio2jail_output_file_path = TEMPFILE_POOL.pop().expect("Couldn't acquire tempfile!");
-		let sio2jail_output_file = File::create(&sio2jail_output_file_path).expect("Failed to create temporary file!");
-		let error_file_path = TEMPFILE_POOL.pop().expect("Couldn't acquire tempfile!");
-		let error_file = File::create(&error_file_path).expect("Failed to create temporary file!");
-
-		let result = generate_output_sio2jail(executable_path, input_file, test_output_file, timeout, &_memory_limit, &sio2jail_output_file_path, sio2jail_output_file, &error_file_path, error_file);
-
-		TEMPFILE_POOL.push(sio2jail_output_file_path).expect("Couldn't push into tempfile pool");
-		TEMPFILE_POOL.push(error_file_path).expect("Couldn't push into tempfile pool");
-
-		result
+	let (execution_metrics, execution_result) = if _use_sio2jail {
+		todo!();
+		// let sio2jail_output_file_path = TEMPFILE_POOL.pop().expect("Couldn't acquire tempfile!");
+		// let sio2jail_output_file = File::create(&sio2jail_output_file_path).expect("Failed to create temporary file!");
+		// let error_file_path = TEMPFILE_POOL.pop().expect("Couldn't acquire tempfile!");
+		// let error_file = File::create(&error_file_path).expect("Failed to create temporary file!");
+		//
+		// let result = generate_output_sio2jail(executable_path, input_file, test_output_file, timeout, &_memory_limit, &sio2jail_output_file_path, sio2jail_output_file, &error_file_path, error_file);
+		//
+		// TEMPFILE_POOL.push(sio2jail_output_file_path).expect("Couldn't push into tempfile pool");
+		// TEMPFILE_POOL.push(error_file_path).expect("Couldn't push into tempfile pool");
+		//
+		// result
 	} else {
-		generate_output_default(executable_path, input_file, test_output_file, timeout)
+		test_runner.test_to_vec(input_source)
 	};
 	#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
-	let (execution_result, execution_error) = generate_output_default(executable_path, input_file, test_output_file, timeout);
+	let (execution_result, execution_error) = generate_output_direct(executable_path, input_file, test_output_file, timeout);
 
-	if let Err(execution_error) = execution_error {
-		TEMPFILE_POOL.push(test_output_file_path).expect("Couldn't push into tempfile pool");
-		return (ProgramError { test_name: test_name.to_string(), error: execution_error }, execution_result);
-	}
+	let output = match execution_result {
+		Err(error) => {
+			return (ProgramError { test_name: test_name.to_string(), error }, execution_metrics);
+		}
+		Ok(output) => output
+	};
 
-	let test_output = fs::read_to_string(&test_output_file_path);
-	TEMPFILE_POOL.push(test_output_file_path).expect("Couldn't push into tempfile pool");
-	let Ok(test_output) = test_output else {
-		return (ProgramError { test_name: test_name.to_string(), error: InvalidOutput }, execution_result);
+	let Ok(output) = String::from_utf8(output) else {
+		return (ProgramError { test_name: test_name.to_string(), error: InvalidOutput }, execution_metrics);
 	};
 
 	return if let Some(checker_path) = checker_path {
@@ -334,8 +300,8 @@ pub fn run_test(
 		let result = (
 			checker_verify(test_name,
 				&checker_path,
-				&fs::read_to_string(input_file_path).expect("Couldn't read input file!"),
-				&test_output,
+				input_source,
+				&output,
 				&checker_input_file_path,
 				checker_input_file,
 				&checker_output_file_path,
@@ -352,7 +318,7 @@ pub fn run_test(
 	} else {
 		let correct_output_file_path = output_dir.join(format!("{}{}", &test_name, &out_extension));
 		if !correct_output_file_path.is_file() {
-			return (NoOutputFile { test_name: test_name.to_string() }, ExecutionResult { time_seconds: 0f64, memory_kilobytes: None });
+			return (NoOutputFile { test_name: test_name.to_string() }, ExecutionMetrics { time_seconds: 0f64, memory_kilobytes: None });
 		}
 		let correct_output = fs::read_to_string(correct_output_file_path).expect("Failed to read output file!");
 

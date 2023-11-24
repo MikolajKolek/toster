@@ -2,12 +2,15 @@ mod args;
 mod test_result;
 mod testing_utils;
 mod prepare_input;
+mod run;
+mod generic_utils;
 
 use std::{fs, panic, process, thread};
 use std::cmp::Ordering;
 use std::ffi::OsStr;
 use std::fmt::Write as FmtWrite;
 use std::fs::File;
+use std::io::Write;
 use std::panic::PanicInfo;
 use std::path::PathBuf;
 use std::process::Command;
@@ -26,11 +29,12 @@ use rayon::prelude::*;
 use tempfile::tempdir;
 use which::which;
 use args::Args;
-use crate::prepare_input::{prepare_file_inputs, TestInputSource};
+use crate::generic_utils::OptionExt;
+use crate::prepare_input::prepare_file_inputs;
+use crate::run::BasicTestRunner;
 use crate::test_result::{ExecutionError, TestResult};
-use crate::test_result::TestResult::CheckerError;
-use crate::testing_utils::{compile_cpp, fill_tempfile_pool, generate_output_default, init_sio2jail, run_test};
-use crate::TestResult::{Correct, ProgramError, Incorrect, NoOutputFile};
+use crate::testing_utils::{compile_cpp, fill_tempfile_pool, init_sio2jail};
+use crate::TestResult::{Correct, ProgramError, Incorrect};
 
 lazy_static! {
     static ref SUCCESS_COUNT: RelaxedCounter = RelaxedCounter::new(0);
@@ -43,8 +47,8 @@ lazy_static! {
 	static ref CHECKER_ERROR_COUNT: RelaxedCounter = RelaxedCounter::new(0);
     static ref NO_OUTPUT_FILE_COUNT: RelaxedCounter = RelaxedCounter::new(0);
 
-    static ref SLOWEST_TEST: Arc<Mutex<(f64, String)>> = Arc::new(Mutex::new((-1 as f64, String::new())));
-    static ref MOST_MEMORY_USED: Arc<Mutex<(i64, String)>> = Arc::new(Mutex::new((-1, String::new())));
+    static ref SLOWEST_TEST: Arc<Mutex<Option<(Duration, String)>>> = Arc::new(Mutex::new(None));
+    static ref MOST_MEMORY_USED: Arc<Mutex<Option<(i64, String)>>> = Arc::new(Mutex::new(None));
     static ref ERRORS: Arc<Mutex<Vec<TestResult>>> = Arc::new(Mutex::new(vec![]));
 }
 
@@ -179,6 +183,12 @@ fn setup_panic() {
 	}
 }
 
+#[warn(must_use)]
+fn check_ctrlc() -> Option<()> {
+	if RECEIVED_CTRL_C.load(Acquire) { None }
+	else { Some(()) }
+}
+
 fn main() {
 	setup_panic();
 	ctrlc::set_handler(move || {
@@ -215,7 +225,7 @@ fn main() {
 		return;
 	}
 	if sio2jail && memory_limit == 0 {
-		memory_limit = 1048576;
+		memory_limit = 1024 * 1024;
 	}
 	if sio2jail && !init_sio2jail() {
 		return;
@@ -368,88 +378,66 @@ fn main() {
 		// }
 	}
 
+	let runner = BasicTestRunner {
+		executable_path: executable,
+		timeout: Duration::from_secs(args.timeout)
+	};
+
 	// Running tests / generating output
 	TIME_BEFORE_TESTING.set(Instant::now()).expect("Couldn't store timestamp before testing!");
 	let progress_bar = ProgressBar::new(inputs.test_count as u64).with_style(style);
 	inputs.iterator.progress_with(progress_bar).try_for_each(|input| -> Option<()> {
 		debug_assert!(!RECEIVED_CTRL_C.load(Acquire), "Test started after CTRL+C has been pressed");
 
-		let input_file_path = match input.input_source { TestInputSource::File(path) => path };
+		let (metrics, output) = runner.test_to_vec(&input.input_source);
 
-		let mut test_time: f64 = f64::MAX;
-		let mut test_memory: i64 = -1;
-		if args.generate {
-			let input_file = File::open(&input_file_path).expect(&format!("Could not open input file {}", input_file_path.display()));
-			let output_file_path = output_dir.join(format!("{}{}", input.test_name, args.out_ext));
-			let output_file = File::create(&output_file_path).expect("Failed to create output file!");
+		check_ctrlc();
 
-			let (execution_result, execution_error) = generate_output_default(&executable, input_file, output_file, &args.timeout);
-			if RECEIVED_CTRL_C.load(Acquire) {
-				return None;
-			}
-			match execution_error {
-				Ok(()) => {
-					SUCCESS_COUNT.inc();
+		let output = match output {
+			Ok(output) => { output }
+			Err(error) => {
+				match error {
+					ExecutionError::TimedOut => { TIMED_OUT_COUNT.inc(); }
+					ExecutionError::InvalidOutput => { INVALID_OUTPUT_COUNT.inc(); }
+					ExecutionError::MemoryLimitExceeded => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
+					ExecutionError::RuntimeError(_) => { RUNTIME_ERROR_COUNT.inc(); }
+					ExecutionError::Sio2jailError(_) => { SIO2JAIL_ERROR_COUNT.inc(); }
+					ExecutionError::IncorrectCheckerFormat(_) => { CHECKER_ERROR_COUNT.inc(); }
 				}
-				Err(error) => {
-					match error {
-						ExecutionError::TimedOut => { TIMED_OUT_COUNT.inc(); }
-						ExecutionError::InvalidOutput => { INVALID_OUTPUT_COUNT.inc(); }
-						ExecutionError::MemoryLimitExceeded => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
-						ExecutionError::RuntimeError(_) => { RUNTIME_ERROR_COUNT.inc(); }
-						ExecutionError::Sio2jailError(_) => { SIO2JAIL_ERROR_COUNT.inc(); }
-						ExecutionError::IncorrectCheckerFormat(_) => { CHECKER_ERROR_COUNT.inc(); }
-					}
-					let clone = Arc::clone(&ERRORS);
-					clone.lock().expect("Failed to acquire mutex!").push(ProgramError { test_name: input.test_name.clone(), error });
-				}
-			}
-
-			test_time = execution_result.time_seconds;
-		}
-		else {
-			let (test_result, execution_result) = run_test(&executable, checker_executable.as_deref(), input_file_path.as_path(), &output_dir, &input.test_name, &args.out_ext, &args.timeout, sio2jail, memory_limit);
-			test_time = execution_result.time_seconds;
-			test_memory = execution_result.memory_kilobytes.unwrap_or(-1);
-
-			if RECEIVED_CTRL_C.load(Acquire) {
-				return None
-			}
-
-			match test_result {
-				Correct { .. } => { SUCCESS_COUNT.inc(); }
-				Incorrect { .. } => { INCORRECT_COUNT.inc(); }
-				ProgramError { error: ExecutionError::TimedOut, .. } => { TIMED_OUT_COUNT.inc(); }
-				ProgramError { error: ExecutionError::InvalidOutput, .. } => { INVALID_OUTPUT_COUNT.inc(); }
-				ProgramError { error: ExecutionError::MemoryLimitExceeded, .. } => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
-				ProgramError { error: ExecutionError::RuntimeError(_), .. } => { RUNTIME_ERROR_COUNT.inc(); }
-				ProgramError { error: ExecutionError::Sio2jailError(_), .. } => { SIO2JAIL_ERROR_COUNT.inc(); }
-				ProgramError { error: ExecutionError::IncorrectCheckerFormat(_), .. } => { CHECKER_ERROR_COUNT.inc(); }
-				CheckerError { .. } => { CHECKER_ERROR_COUNT.inc(); }
-				NoOutputFile { .. } => { NO_OUTPUT_FILE_COUNT.inc(); }
-			}
-
-			if !test_result.is_correct() {
 				let clone = Arc::clone(&ERRORS);
-				clone.lock().expect("Failed to acquire mutex!").push(test_result);
+				clone.lock().expect("Failed to acquire mutex!").push(ProgramError { test_name: input.test_name.clone(), error });
+				return;
 			}
-		}
-
-		if RECEIVED_CTRL_C.load(Acquire) {
-			return None;
-		}
+		};
+		SUCCESS_COUNT.inc();
 
 		let slowest_test_clone = Arc::clone(&SLOWEST_TEST);
 		let mut slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");
-		if test_time > slowest_test_mutex.0 {
-			*slowest_test_mutex = (test_time, input.test_name.clone());
+		if slowest_test_mutex.is_none_or(|(time, _)| &metrics.time > time) {
+			*slowest_test_mutex = Some((metrics.time, input.test_name.clone()));
 		}
 
-		let most_memory_clone = Arc::clone(&MOST_MEMORY_USED);
-		let mut most_memory_mutex = most_memory_clone.lock().expect("Failed to acquire mutex!");
-		if test_memory > most_memory_mutex.0 {
-			*most_memory_mutex = (test_memory, input.test_name.clone());
+		if let Some(new_memory) = &metrics.memory_kilobytes {
+			let most_memory_clone = Arc::clone(&MOST_MEMORY_USED);
+			let mut most_memory_mutex = most_memory_clone.lock().expect("Failed to acquire mutex!");
+			if most_memory_mutex.is_none_or(|(memory, _)| new_memory > memory) {
+				*most_memory_mutex = Some((*new_memory, input.test_name.clone()));
+			}
 		}
+
+		if args.generate {
+			let output_file_path = output_dir.join(format!("{}{}", input.test_name, args.out_ext));
+			let mut output_file = File::create(&output_file_path).expect("Failed to create output file!");
+			output_file.write_all(&output).expect("Failed to save test output");
+
+			check_ctrlc();
+
+			return Some(())
+		}
+
+		// Test
+
+		check_ctrlc();
 
 		Some(())
 	});

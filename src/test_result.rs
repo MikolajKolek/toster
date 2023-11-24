@@ -1,8 +1,9 @@
+use std::time::Duration;
 use colored::Colorize;
 
-pub struct ExecutionResult {
+pub struct ExecutionMetrics {
 	pub(crate) memory_kilobytes: Option<i64>,
-	pub(crate) time_seconds: f64
+	pub(crate) time: Duration,
 }
 
 pub enum TestResult {

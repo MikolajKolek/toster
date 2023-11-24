@@ -1,11 +1,20 @@
 use std::fs::read_dir;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use colored::Colorize;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator};
 use rayon::vec::IntoIter;
 
 pub(crate) enum TestInputSource {
     File(PathBuf)
+}
+
+impl TestInputSource {
+    pub(crate) fn get_stdin(&self) -> Stdio {
+        match self {
+            TestInputSource::File(path) => Stdio::from(path)
+        }
+    }
 }
 
 pub(crate) struct Test {
