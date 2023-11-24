@@ -1,4 +1,5 @@
 use std::fs::{File, read_dir};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use colored::Colorize;
@@ -13,6 +14,12 @@ impl TestInputSource {
     pub(crate) fn get_stdin(&self) -> Stdio {
         match self {
             TestInputSource::File(path) => Stdio::from(File::open(path).expect("Failed to open input file"))
+        }
+    }
+
+    pub(crate) fn read(&self) -> impl Read {
+        match self {
+            TestInputSource::File(path) => { File::open(path).expect("Failed to open input file") }
         }
     }
 }

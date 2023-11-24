@@ -8,7 +8,6 @@ use directories::BaseDirs;
 use wait_timeout::ChildExt;
 use which::which;
 use crate::pipes::BufferedPipe;
-use crate::prepare_input::TestInputSource;
 use crate::executor::TestExecutor;
 use crate::test_errors::{ExecutionError, ExecutionMetrics};
 use crate::test_errors::ExecutionError::{MemoryLimitExceeded, RuntimeError, Sio2jailError, TimedOut};
@@ -109,8 +108,8 @@ impl Sio2jailExecutor {
 }
 
 impl TestExecutor for Sio2jailExecutor {
-    fn test_to_string(&self, input_source: &TestInputSource) -> (ExecutionMetrics, Result<String, ExecutionError>) {
-        let output = match self.run_sio2jail(input_source.get_stdin(), &self.executable_path) {
+    fn test_to_string(&self, input_stdio: Stdio) -> (ExecutionMetrics, Result<String, ExecutionError>) {
+        let output = match self.run_sio2jail(input_stdio, &self.executable_path) {
             Err(TimedOut) => {
                 return (ExecutionMetrics { time: Some(self.timeout), memory_kilobytes: None }, Err(MemoryLimitExceeded));
             }

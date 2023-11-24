@@ -6,6 +6,7 @@ mod executor;
 mod generic_utils;
 mod test_summary;
 mod pipes;
+mod checker;
 
 use std::{fs, panic, thread};
 use std::ffi::OsStr;
@@ -25,16 +26,17 @@ use is_executable::is_executable;
 use rayon::prelude::*;
 use tempfile::tempdir;
 use args::Args;
-use crate::args::ActionType::{Checker, Generate};
 use crate::args::{ActionType, InputConfig, ParsedConfig};
 use crate::args::ExecuteMode::*;
+use crate::checker::Checker;
 use crate::executor::simple::SimpleExecutor;
-use crate::executor::sio2jail::Sio2jailExecutor;
 use crate::prepare_input::prepare_file_inputs;
 use crate::executor::TestExecutor;
 use crate::test_errors::TestError::ProgramError;
 use crate::test_summary::TestSummary;
 use crate::testing_utils::{compare_output, compile_cpp};
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+use crate::executor::sio2jail::Sio2jailExecutor;
 
 static TIME_BEFORE_TESTING: OnceLock<Instant> = OnceLock::new();
 static TEST_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -144,7 +146,7 @@ fn main() {
 
 	let tempdir = tempdir().expect("Failed to create temporary directory!");
 
-	if let Generate { output_directory, .. } = &config.action_type {
+	if let ActionType::Generate { output_directory, .. } = &config.action_type {
 		if !output_directory.is_dir() {
 			fs::create_dir_all(output_directory).expect("Failed to create output directory");
 		}
@@ -178,7 +180,7 @@ fn main() {
 	};
 
 	// Checker compiling
-	let checker_executable: Option<PathBuf> = if let Checker { path } = &config.action_type {
+	let checker_executable: Option<PathBuf> = if let ActionType::Checker { path } = &config.action_type {
 		let checker_extension = path.extension().unwrap_or(OsStr::new("")).to_str().expect("Couldn't get the extension of the provided file");
 
 		if !is_executable(&path) || (checker_extension == "cpp" || checker_extension == "cc" || checker_extension == "cxx" || checker_extension == "c") {
@@ -232,6 +234,10 @@ fn main() {
 		},
 	};
 
+	let checker = checker_executable.map(|checker_executable| {
+		Checker::new(checker_executable, config.execute_timeout)
+	});
+
 	// Progress bar styling
     let style: ProgressStyle = {
         let test_summary = test_summary.clone();
@@ -258,9 +264,9 @@ fn main() {
 	TIME_BEFORE_TESTING.set(Instant::now()).expect("Couldn't store timestamp before testing!");
 	let progress_bar = ProgressBar::new(inputs.test_count as u64).with_style(style);
 	inputs.iterator.progress_with(progress_bar).try_for_each(|input| -> Option<()> {
-		debug_assert!(!RECEIVED_CTRL_C.load(Acquire), "Test started after CTRL+C has been pressed");
+		check_ctrlc()?;
 
-		let (metrics, output) = runner.test_to_string(&input.input_source);
+		let (metrics, output) = runner.test_to_string(input.input_source.get_stdin());
 		check_ctrlc()?;
 
 		let output = match output {
@@ -275,7 +281,7 @@ fn main() {
 		check_ctrlc()?;
 
 		match &config.action_type {
-			Generate { output_directory, output_ext } => {
+			ActionType::Generate { output_directory, output_ext } => {
 				let output_file_path = output_directory.join(format!("{}{}", input.test_name, output_ext));
 				fs::write(&output_file_path, &output).expect("Failed to save test output");
 			},
@@ -287,9 +293,14 @@ fn main() {
 					return Some(());
 				}
 			},
-			Checker { .. } => {
-				todo!("Checker support is not implemented in this version");
-			},
+			_ => {},
+		}
+		if let Some(checker) = &checker {
+			if let Err(error) = checker.check(&input.input_source, &output) {
+				test_summary.lock().expect("Failed to lock test summary mutex")
+					.add_test_error(error, input.test_name);
+				return Some(());
+			}
 		}
 
 		test_summary.lock().expect("Failed to lock test summary mutex")

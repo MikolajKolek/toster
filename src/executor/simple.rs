@@ -5,7 +5,6 @@ use crate::test_errors::{ExecutionError, ExecutionMetrics};
 use wait_timeout::ChildExt;
 use crate::executor::TestExecutor;
 use crate::pipes::BufferedPipe;
-use crate::prepare_input::TestInputSource;
 use crate::test_errors::ExecutionError::{RuntimeError, TimedOut};
 
 #[cfg(all(unix))]
@@ -62,13 +61,14 @@ impl TestExecutor for SimpleExecutor {
     //         .stderr(Stdio::null())
     //         .spawn().expect("Failed to spawn child");
     //     self.wait_for_child(child)
+    //     input_source.close();
     // }
 
-    fn test_to_string(&self, input_source: &TestInputSource) -> (ExecutionMetrics, Result<String, ExecutionError>) {
+    fn test_to_string(&self, input_stdio: Stdio) -> (ExecutionMetrics, Result<String, ExecutionError>) {
         let mut stdout = BufferedPipe::create().expect("Failed to create stdout pipe");
 
         let child = Command::new(&self.executable_path)
-            .stdin(input_source.get_stdin())
+            .stdin(input_stdio)
             .stdout(stdout.get_stdio())
             .stderr(Stdio::null())
             .spawn().expect("Failed to spawn child");
