@@ -217,7 +217,7 @@ fn main() {
 		}),
 		#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 		Sio2jail { memory_limit } => {
-			let runner = Sio2jailExecutor::init(
+			let runner = Sio2jailExecutor::init_and_test(
 				config.execute_timeout,
 				executable,
 				memory_limit,
@@ -253,33 +253,6 @@ fn main() {
 		},
 	};
 	TEST_COUNT.store(inputs.test_count, Release);
-
-	// TODO: Testing for sio2jail errors before testing starts
-	// if sio2jail {
-	// 	let Ok(true_command_location) = which("true") else {
-	// 		println!("{}", "The executable for the \"true\" command could not be found".red());
-	// 		return;
-	// 	};
-	//
-	// 	let test_input_path = tempdir.path().join("test.in");
-	// 	File::create(&test_input_path).expect("Failed to create temporary file!");
-
-		// let random_input_file_entry = input_files.get(0).expect("Couldn't get random input file").as_ref().expect("Failed to acquire reference!");
-		// let random_test_name = random_input_file_entry.path().file_stem().expect("Couldn't get the name of a random input file").to_str().expect("Couldn't get the name of a random input file").to_string();
-		//
-		// let (test_result, _) = run_test(&true_command_location, None, &test_input_path, &output_dir, &random_test_name, &args.out_ext, &( 1u64), true, 0);
-		// if let ProgramError { error: ExecutionError::Sio2jailError(error), .. } = test_result {
-		// 	if error == "Exception occurred: System error occured: perf event open failed: Permission denied: error 13: Permission denied\n" {
-		// 		println!("{}", "You need to executor the following command to use toster with sio2jail. You may also put this option in your /etc/sysctl.conf. This will make the setting persist across reboots.".red());
-		// 		println!("{}", "sudo sysctl -w kernel.perf_event_paranoid=-1".bright_black().italic());
-		// 	}
-		// 	else {
-		// 		println!("Sio2jail error: {}", error.red());
-		// 	}
-		//
-		// 	return;
-		// }
-	// }
 
 	// Running tests / generating output
 	TIME_BEFORE_TESTING.set(Instant::now()).expect("Couldn't store timestamp before testing!");
