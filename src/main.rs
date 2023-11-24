@@ -8,16 +8,15 @@ mod test_summary;
 mod pipes;
 mod checker;
 
-use std::{fs, panic, thread};
+use std::{fs, panic};
 use std::ffi::OsStr;
 use std::fmt::Write as FmtWrite;
 use std::panic::PanicInfo;
 use std::path::PathBuf;
 use std::process::{Command, exit};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Acquire, Release};
-use std::time::{Duration, Instant};
 use clap::Parser;
 use colored::Colorize;
 use human_panic::{handle_dump, print_msg};
@@ -37,22 +36,15 @@ use crate::test_summary::TestSummary;
 use crate::testing_utils::{compare_output, compile_cpp};
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use crate::executor::sio2jail::Sio2jailExecutor;
-
-static TIME_BEFORE_TESTING: OnceLock<Instant> = OnceLock::new();
-static TEST_COUNT: AtomicUsize = AtomicUsize::new(0);
-static GENERATE: AtomicBool = AtomicBool::new(false);
+use crate::generic_utils::halt;
 
 static RECEIVED_CTRL_C: AtomicBool = AtomicBool::new(false);
-static PANICKING: AtomicBool = AtomicBool::new(false);
 
-fn print_output(stopped_early: bool, test_summary: &mut TestSummary) {
-	if TIME_BEFORE_TESTING.get().is_none() {
+fn print_output(stopped_early: bool, test_summary: &mut Option<TestSummary>) {
+	let Some(test_summary) = test_summary else {
 		println!("{}", "Toster was stopped before testing could start".red());
 		exit(0);
-	}
-
-	let testing_time = TIME_BEFORE_TESTING.get().unwrap().elapsed().as_secs_f64();
-	let not_tested_count = &TEST_COUNT.load(Acquire) - test_summary.total;
+	};
 
 	if stopped_early {
 		println!();
@@ -73,11 +65,11 @@ fn print_output(stopped_early: bool, test_summary: &mut TestSummary) {
 
 	println!(
 		"{} {} {:.2}s{}\nResults: {}",
-        if GENERATE.load(Acquire) { "Generating" } else { "Testing" },
+        if test_summary.generate_mode { "Generating" } else { "Testing" },
         if stopped_early {"stopped after"} else {"finished in"},
-        testing_time,
+        test_summary.start_time.elapsed().as_secs_f64(),
         additional_info,
-        test_summary.format_counts(Some(not_tested_count)),
+        test_summary.format_counts(true),
 	);
 
 	let incorrect_results=  test_summary.get_errors();
@@ -93,22 +85,21 @@ fn print_output(stopped_early: bool, test_summary: &mut TestSummary) {
 }
 
 fn setup_panic() {
+	let is_panicking = AtomicBool::new(false);
 	match human_panic::PanicStyle::default() {
 		human_panic::PanicStyle::Debug => {}
 		human_panic::PanicStyle::Human => {
 			let meta = human_panic::metadata!();
 
 			panic::set_hook(Box::new(move |info: &PanicInfo| {
-				if !PANICKING.load(Acquire) {
-					PANICKING.store(true, Release);
+				if is_panicking.load(Acquire) {
+					halt();
+				}
+				is_panicking.store(true, Release);
 
-					let file_path = handle_dump(&meta, info);
-					print_msg(file_path, &meta).expect("human-panic: printing error message to console failed");
-					exit(0);
-				}
-				else {
-					thread::sleep(Duration::from_secs(u64::MAX));
-				}
+				let file_path = handle_dump(&meta, info);
+				print_msg(file_path, &meta).expect("human-panic: printing error message to console failed");
+				exit(0);
 			}));
 		}
 	}
@@ -131,11 +122,7 @@ fn main() {
 		},
 	};
 
-    GENERATE.store(config.generate_mode(), Release);
-
-	let test_summary = Arc::new(Mutex::new(
-		TestSummary::new(config.generate_mode())
-	));
+	let test_summary: Arc<Mutex<Option<TestSummary>>> = Arc::new(Mutex::new(None));
 	{
 		let test_summary = test_summary.clone();
 		ctrlc::set_handler(move || {
@@ -246,22 +233,20 @@ fn main() {
             .with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed!"))
             .progress_chars("#>-")
             .with_key("counts", move |_state: &ProgressState, w: &mut dyn FmtWrite| {
-                write!(w, "{}", test_summary.lock().expect("Failed to lock test summary mutex").format_counts(None)).expect("Displaying the progress bar failed!")
+                write!(w, "{}", test_summary.lock().expect("Failed to lock test summary mutex").as_ref().unwrap().format_counts(false)).expect("Displaying the progress bar failed!")
             })
             .with_key("ctrlc", |_state: &ProgressState, w: &mut dyn FmtWrite|
                 write!(w, "{}", "(Press Ctrl+C to stop testing and print current results)".bright_black()).expect("Displaying the progress bar Ctrl+C message failed!")
             )
     };
 
-	let inputs = match config.input {
+	let inputs = match &config.input {
 		InputConfig::Directory { directory, ext } => {
-			prepare_file_inputs(&directory, &ext)
+			prepare_file_inputs(directory, ext)
 		},
 	};
-	TEST_COUNT.store(inputs.test_count, Release);
+	*test_summary.lock().expect("Failed to lock test summary mutex") = Some(TestSummary::new(config.generate_mode(), inputs.test_count));
 
-	// Running tests / generating output
-	TIME_BEFORE_TESTING.set(Instant::now()).expect("Couldn't store timestamp before testing!");
 	let progress_bar = ProgressBar::new(inputs.test_count as u64).with_style(style);
 	inputs.iterator.progress_with(progress_bar).try_for_each(|input| -> Option<()> {
 		check_ctrlc()?;
@@ -272,7 +257,7 @@ fn main() {
 		let output = match output {
 			Ok(output) => output,
 			Err(error) => {
-				test_summary.lock().expect("Failed to lock test summary mutex")
+				test_summary.lock().expect("Failed to lock test summary mutex").as_mut().unwrap()
 					.add_test_error(ProgramError { error }, input.test_name);
 				return Some(());
 			}
@@ -288,7 +273,7 @@ fn main() {
 			ActionType::SimpleCompare { output_directory, output_ext } => {
 				let output_file_path = output_directory.join(format!("{}{}", input.test_name, output_ext));
 				if let Err(error) = compare_output(&output_file_path, &output) {
-					test_summary.lock().expect("Failed to lock test summary mutex")
+					test_summary.lock().expect("Failed to lock test summary mutex").as_mut().unwrap()
 						.add_test_error(error, input.test_name);
 					return Some(());
 				}
@@ -297,13 +282,13 @@ fn main() {
 		}
 		if let Some(checker) = &checker {
 			if let Err(error) = checker.check(&input.input_source, &output) {
-				test_summary.lock().expect("Failed to lock test summary mutex")
+				test_summary.lock().expect("Failed to lock test summary mutex").as_mut().unwrap()
 					.add_test_error(error, input.test_name);
 				return Some(());
 			}
 		}
 
-		test_summary.lock().expect("Failed to lock test summary mutex")
+		test_summary.lock().expect("Failed to lock test summary mutex").as_mut().unwrap()
 			.add_success(&metrics, &input.test_name);
 		check_ctrlc()?;
 		Some(())

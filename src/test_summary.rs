@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use colored::Color::{Blue, Green, Red, Yellow};
 use colored::{Color, Colorize};
 use crate::generic_utils::OptionExt;
@@ -7,9 +7,11 @@ use crate::test_errors::{ExecutionError, ExecutionMetrics, TestError};
 use crate::test_errors::TestError::*;
 
 pub(crate) struct TestSummary {
-    generate_mode: bool,
+    pub(crate) generate_mode: bool,
+    pub(crate) start_time: Instant,
 
     pub(crate) total: usize,
+    pub(crate) processed: usize,
     pub(crate) success: usize,
     pub(crate) incorrect: usize,
     pub(crate) timed_out: usize,
@@ -67,11 +69,13 @@ impl<'a> CountPart<'a> {
 }
 
 impl TestSummary {
-    pub(crate) fn new(generate_mode: bool) -> Self {
+    pub(crate) fn new(generate_mode: bool, total_count: usize) -> Self {
         TestSummary {
             generate_mode,
+            start_time: Instant::now(),
 
-            total: 0,
+            total: total_count,
+            processed: 0,
             incorrect: 0,
             timed_out: 0,
             invalid_output: 0,
@@ -90,13 +94,13 @@ impl TestSummary {
     }
 
     pub(crate) fn add_success(&mut self, metrics: &ExecutionMetrics, test_name: &str) {
-        self.total += 1;
+        self.processed += 1;
         self.success += 1;
         self.add_metrics(metrics, test_name);
     }
 
     pub(crate) fn add_test_error(&mut self, error: TestError, test_name: String) {
-        self.total += 1;
+        self.processed += 1;
         match &error {
             Incorrect { .. } => { self.incorrect += 1 }
             ProgramError { error: ExecutionError::TimedOut, .. } => { self.timed_out += 1 }
@@ -126,7 +130,7 @@ impl TestSummary {
         }
     }
 
-    pub(crate) fn format_counts(&self, not_finished: Option<usize>) -> String {
+    pub(crate) fn format_counts(&self, show_not_finished: bool) -> String {
         [
             CountPart::new(self.success, if self.generate_mode { "successful" } else { "correct" }).display_empty().with_color(Green),
             CountPart::new(self.incorrect, "wrong answer").with_plural("wrong answers"),
@@ -137,7 +141,7 @@ impl TestSummary {
             CountPart::new(self.no_output_file, "without output file"),
             CountPart::new(self.sio2jail_error, "sio2jail error").with_plural("sio2jail errors"),
             CountPart::new(self.checker_error, "checker error").with_plural("checker errors").with_color(Blue),
-            CountPart::new(not_finished.unwrap_or(0), "not finished").with_color(Yellow),
+            CountPart::new(if show_not_finished { self.total - self.processed } else { 0 }, "not finished").with_color(Yellow),
         ]
             .into_iter()
             .filter(|part| part.display_empty || part.count > 0)

@@ -8,9 +8,9 @@ use crate::pipes::BufferedPipe;
 use crate::test_errors::ExecutionError::{RuntimeError, TimedOut};
 
 #[cfg(all(unix))]
-use std::os::unix::process::ExitStatusExt;
+use crate::generic_utils::halt;
 #[cfg(all(unix))]
-use std::thread;
+use std::os::unix::process::ExitStatusExt;
 
 pub(crate) struct SimpleExecutor {
     pub(crate) timeout: Duration,
@@ -28,7 +28,7 @@ impl SimpleExecutor {
                 #[cfg(all(unix))]
                 if status.signal().expect("The program returned an invalid status code!") == 2 {
                     // TODO: Implement better
-                    thread::sleep(Duration::from_secs(u64::MAX));
+                    halt();
                 }
 
                 Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", status.to_string())))

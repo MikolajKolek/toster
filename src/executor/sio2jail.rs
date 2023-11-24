@@ -1,7 +1,6 @@
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::thread;
 use std::time::Duration;
 use command_fds::{CommandFdExt, FdMapping};
 use directories::BaseDirs;
@@ -9,6 +8,7 @@ use wait_timeout::ChildExt;
 use which::which;
 use crate::pipes::BufferedPipe;
 use crate::executor::TestExecutor;
+use crate::generic_utils::halt;
 use crate::test_errors::{ExecutionError, ExecutionMetrics};
 use crate::test_errors::ExecutionError::{MemoryLimitExceeded, RuntimeError, Sio2jailError, TimedOut};
 
@@ -145,7 +145,7 @@ impl TestExecutor for Sio2jailExecutor {
             None => {
                 #[cfg(all(unix))]
                 if cfg!(unix) && output.status.signal().expect("Sio2jail returned an invalid status code!") == 2 {
-                    thread::sleep(Duration::from_secs(u64::MAX));
+                    halt();
                 }
 
                 return (metrics, Err(RuntimeError(format!    ("- the process was terminated with the following error:\n{}", output.status.to_string()))))
