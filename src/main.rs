@@ -1,5 +1,5 @@
 mod args;
-mod test_result;
+mod test_errors;
 mod testing_utils;
 mod prepare_input;
 mod run;
@@ -10,7 +10,6 @@ use std::{fs, panic, process, thread};
 use std::ffi::OsStr;
 use std::fmt::Write as FmtWrite;
 use std::fs::File;
-use std::io::{Read, Write};
 use std::panic::PanicInfo;
 use std::path::PathBuf;
 use std::process::Command;
@@ -23,23 +22,15 @@ use colored::Colorize;
 use human_panic::{handle_dump, print_msg};
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressState, ProgressStyle};
 use is_executable::is_executable;
-use lazy_static::lazy_static;
 use rayon::prelude::*;
 use tempfile::tempdir;
 use which::which;
 use args::Args;
-use crate::generic_utils::OptionExt;
 use crate::prepare_input::prepare_file_inputs;
 use crate::run::BasicTestRunner;
-use crate::test_result::TestResult;
+use crate::test_errors::TestError::ProgramError;
 use crate::test_summary::TestSummary;
-use crate::testing_utils::{compile_cpp, fill_tempfile_pool, init_sio2jail};
-use crate::TestResult::{Correct, ProgramError, Incorrect};
-
-lazy_static! {
-    static ref SLOWEST_TEST: Arc<Mutex<Option<(Duration, String)>>> = Arc::new(Mutex::new(None));
-    static ref MOST_MEMORY_USED: Arc<Mutex<Option<(i64, String)>>> = Arc::new(Mutex::new(None));
-}
+use crate::testing_utils::{compare_output, compile_cpp, fill_tempfile_pool, init_sio2jail};
 
 static TIME_BEFORE_TESTING: OnceLock<Instant> = OnceLock::new();
 static TEST_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -49,11 +40,6 @@ static RECEIVED_CTRL_C: AtomicBool = AtomicBool::new(false);
 static PANICKING: AtomicBool = AtomicBool::new(false);
 
 fn print_output(stopped_early: bool, test_summary: &mut TestSummary) {
-	// let slowest_test_clone = Arc::clone(&SLOWEST_TEST);
-	// let most_memory_clone = Arc::clone(&MOST_MEMORY_USED);
-	// let slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");
-	// let most_memory_mutex = most_memory_clone.lock().expect("Failed to acquire mutex!");
-
 	if TIME_BEFORE_TESTING.get().is_none() {
 		println!("{}", "Toster was stopped before testing could start".red());
 		process::exit(0);
@@ -67,13 +53,17 @@ fn print_output(stopped_early: bool, test_summary: &mut TestSummary) {
 	}
 
 	let mut additional_info = String::new();
-	// if slowest_test_mutex.0 != -1f64 {
-	// 	additional_info = format!(" (Slowest test: {} at {:.3}s{})",
-	// 	                          slowest_test_mutex.1,
-	// 	                          slowest_test_mutex.0,
-	// 	                          if most_memory_mutex.0 != -1 { format!(", most memory used: {} at {}KiB", most_memory_mutex.1, most_memory_mutex.0) } else { String::new() }
-	// 	)
-	// }
+	if let Some(slowest_test) = &test_summary.slowest_test {
+		additional_info = format!(
+			" (Slowest test: {} at {:.3}s)",
+			slowest_test.1,
+		  	slowest_test.0.as_secs_f32(),
+		)
+	}
+	if let Some(most_memory) = &test_summary.most_memory_used {
+		if !additional_info.is_empty() { additional_info += ", " }
+		additional_info += &format!("most memory used: {} at {}KiB", most_memory.1, most_memory.0);
+	}
 
 	println!(
 		"{} {} {:.2}s{}\nResults: {}",
@@ -84,12 +74,12 @@ fn print_output(stopped_early: bool, test_summary: &mut TestSummary) {
         test_summary.format_counts(Some(not_tested_count)),
 	);
 
-	let incorrect_results=  test_summary.get_incorrect_results();
+	let incorrect_results=  test_summary.get_errors();
 	if !incorrect_results.is_empty() {
 		println!("Errors were found in the following tests:");
 
-		for test_error in incorrect_results.iter() {
-			println!("{}", test_error.to_string());
+		for (test_name, error) in incorrect_results.iter() {
+			println!("{}", error.to_string(test_name));
 		}
 	}
 
@@ -118,13 +108,15 @@ fn setup_panic() {
 	}
 }
 
-#[warn(must_use)]
+#[must_use]
 fn check_ctrlc() -> Option<()> {
 	if RECEIVED_CTRL_C.load(Acquire) { None }
 	else { Some(()) }
 }
 
 fn main() {
+	println!("Refactor version!");
+
 	setup_panic();
 
     let args = Args::parse();
@@ -132,13 +124,15 @@ fn main() {
     let input_dir = args.io.as_ref().unwrap_or(&args.r#in);
     let output_dir = args.io.as_ref().unwrap_or(&args.out);
 
-	let mut test_summary = Arc::new(Mutex::new(TestSummary::new(args.generate)));
+	let test_summary = Arc::new(Mutex::new(TestSummary::new(args.generate)));
 
-	let test_summary_1 = test_summary.clone();
-	ctrlc::set_handler(move || {
-		RECEIVED_CTRL_C.store(true, Release);
-		print_output(true, &mut test_summary_1.lock().expect("Failed to lock test summary mutex"));
-	}).expect("Error setting Ctrl-C handler");
+	{
+		let test_summary = test_summary.clone();
+		ctrlc::set_handler(move || {
+			RECEIVED_CTRL_C.store(true, Release);
+			print_output(true, &mut test_summary.lock().expect("Failed to lock test summary mutex"));
+		}).expect("Error setting Ctrl-C handler");
+	}
 
 	let tempdir = tempdir().expect("Failed to create temporary directory!");
 	fill_tempfile_pool(&tempdir);
@@ -272,17 +266,19 @@ fn main() {
 	};
 
 	// Progress bar styling
-	let test_summary_2 = test_summary.clone();
-	let style: ProgressStyle = ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{counts} {ctrlc}")
-		.expect("Progress bar creation failed!")
-		.with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed!"))
-		.progress_chars("#>-")
-		.with_key("counts", move |_state: &ProgressState, w: &mut dyn FmtWrite| {
-            write!(w, "{}", test_summary_2.lock().expect("Failed to lock test summary mutex").format_counts(None)).expect("Displaying the progress bar failed!")
-		})
-		.with_key("ctrlc", |_state: &ProgressState, w: &mut dyn FmtWrite|
-			write!(w, "{}", "(Press Ctrl+C to stop testing and print current results)".bright_black()).expect("Displaying the progress bar Ctrl+C message failed!")
-		);
+    let style: ProgressStyle = {
+        let test_summary = test_summary.clone();
+        ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{counts} {ctrlc}")
+            .expect("Progress bar creation failed!")
+            .with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed!"))
+            .progress_chars("#>-")
+            .with_key("counts", move |_state: &ProgressState, w: &mut dyn FmtWrite| {
+                write!(w, "{}", test_summary.lock().expect("Failed to lock test summary mutex").format_counts(None)).expect("Displaying the progress bar failed!")
+            })
+            .with_key("ctrlc", |_state: &ProgressState, w: &mut dyn FmtWrite|
+                write!(w, "{}", "(Press Ctrl+C to stop testing and print current results)".bright_black()).expect("Displaying the progress bar Ctrl+C message failed!")
+            )
+    };
 
 	let inputs = prepare_file_inputs(&input_dir, &args.in_ext);
 	TEST_COUNT.store(inputs.test_count, Release);
@@ -327,49 +323,35 @@ fn main() {
 		debug_assert!(!RECEIVED_CTRL_C.load(Acquire), "Test started after CTRL+C has been pressed");
 
 		let (metrics, output) = runner.test_to_vec(&input.input_source);
-
-		check_ctrlc();
+		check_ctrlc()?;
 
 		let output = match output {
-			Ok(output) => {
-				test_summary.lock().expect("Failed to lock test summary mutex").increment_success();
-				output
-			}
+			Ok(output) => output,
 			Err(error) => {
-				let program_error = ProgramError { test_name: input.test_name.clone(), error };
-				test_summary.lock().expect("Failed to lock test summary mutex").add_test_result(program_error);
+				test_summary.lock().expect("Failed to lock test summary mutex")
+					.add_test_error(ProgramError { error }, input.test_name);
 				return Some(());
 			}
 		};
 
-		let slowest_test_clone = Arc::clone(&SLOWEST_TEST);
-		let mut slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");
-		if slowest_test_mutex.is_none_or(|(time, _)| &metrics.time > time) {
-			*slowest_test_mutex = Some((metrics.time, input.test_name.clone()));
-		}
+		check_ctrlc()?;
 
-		if let Some(new_memory) = &metrics.memory_kilobytes {
-			let most_memory_clone = Arc::clone(&MOST_MEMORY_USED);
-			let mut most_memory_mutex = most_memory_clone.lock().expect("Failed to acquire mutex!");
-			if most_memory_mutex.is_none_or(|(memory, _)| new_memory > memory) {
-				*most_memory_mutex = Some((*new_memory, input.test_name.clone()));
+		let output_file_path = output_dir.join(format!("{}{}", input.test_name, args.out_ext));
+		if args.generate {
+			fs::write(&output_file_path, &output).expect("Failed to save test output");
+		} else if checker_executable.is_some() {
+			todo!("Checker support is not implemented in this version");
+		} else {
+			if let Err(error) = compare_output(&output_file_path, output) {
+				test_summary.lock().expect("Failed to lock test summary mutex")
+					.add_test_error(error, input.test_name);
+				return Some(());
 			}
 		}
 
-		if args.generate {
-			let output_file_path = output_dir.join(format!("{}{}", input.test_name, args.out_ext));
-			let mut output_file = File::create(&output_file_path).expect("Failed to create output file!");
-			output_file.write_all(&output).expect("Failed to save test output");
-
-			check_ctrlc();
-
-			return Some(())
-		}
-
-		// Test
-
-		check_ctrlc();
-
+		test_summary.lock().expect("Failed to lock test summary mutex")
+			.add_success(&metrics, &input.test_name);
+		check_ctrlc()?;
 		Some(())
 	});
 

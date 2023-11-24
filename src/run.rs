@@ -5,8 +5,8 @@ use std::{io, thread};
 use std::time::{Duration, Instant};
 use wait_timeout::ChildExt;
 use crate::prepare_input::TestInputSource;
-use crate::test_result::ExecutionError::{InvalidOutput, RuntimeError, TimedOut};
-use crate::test_result::{ExecutionError, ExecutionMetrics};
+use crate::test_errors::ExecutionError::{RuntimeError, TimedOut};
+use crate::test_errors::{ExecutionError, ExecutionMetrics};
 
 #[cfg(all(unix))]
 use std::os::unix::process::ExitStatusExt;
@@ -15,6 +15,14 @@ use std::thread::JoinHandle;
 pub(crate) struct BasicTestRunner {
     pub(crate) timeout: Duration,
     pub(crate) executable_path: PathBuf,
+}
+
+struct StreamError(io::Error);
+
+impl From<io::Error> for StreamError {
+    fn from(value: io::Error) -> Self {
+        StreamError(value)
+    }
 }
 
 impl BasicTestRunner {
@@ -52,9 +60,9 @@ impl BasicTestRunner {
         }
     }
 
-    fn read_output_async(stream: &mut Option<ChildStdout>) -> JoinHandle<io::Result<Vec<u8>>> {
+    fn read_output_async(stream: &mut Option<ChildStdout>) -> JoinHandle<Result<Vec<u8>, StreamError>> {
         let stream = stream.take();
-        thread::spawn(|| -> io::Result<Vec<u8>> {
+        thread::spawn(|| -> Result<Vec<u8>, StreamError> {
             let mut buffer: Vec<u8> = Vec::new();
             if let Some(mut stream) = stream {
                 stream.read_to_end(&mut buffer)?;
@@ -82,6 +90,6 @@ impl BasicTestRunner {
 
         let (metrics, result) = self.wait_for_child(child);
         let output = output_handle.join().expect("Output thread panicked");
-        (metrics, result.and_then(|_| output.map_err(|_| InvalidOutput)))
+        (metrics, result.and_then(|_| output.map_err(|_| ExecutionError::OutputStreamError)))
     }
 }

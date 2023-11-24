@@ -2,13 +2,12 @@ use std::cmp::max;
 use std::fs;
 use std::fs::File;
 use std::io::ErrorKind::NotFound;
-use std::io::{Stdout, Write};
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use std::os::fd::AsRawFd;
 #[cfg(all(unix))]
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::{ChildStdout, Command, Stdio};
+use std::process::Command;
 use std::sync::OnceLock;
 #[cfg(all(unix))]
 use std::thread;
@@ -24,15 +23,12 @@ use once_cell::sync::Lazy;
 use tempfile::TempDir;
 use terminal_size::{Height, Width};
 use wait_timeout::ChildExt;
-use crate::{Correct, ProgramError, Incorrect, TestResult};
-use crate::prepare_input::{Test, TestInputSource};
-use crate::run::BasicTestRunner;
-use crate::test_result::{ExecutionError, ExecutionMetrics};
-use crate::test_result::ExecutionError::{InvalidOutput, RuntimeError, TimedOut, IncorrectCheckerFormat};
+use crate::prepare_input::TestInputSource;
+use crate::test_errors::{ExecutionError, ExecutionMetrics, TestError};
+use crate::test_errors::ExecutionError::{RuntimeError, TimedOut};
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-use crate::test_result::ExecutionError::{MemoryLimitExceeded, Sio2jailError};
-use crate::test_result::TestResult::CheckerError;
-use crate::TestResult::NoOutputFile;
+use crate::test_errors::ExecutionError::{MemoryLimitExceeded, Sio2jailError};
+use crate::test_errors::TestError::{Incorrect, NoOutputFile, OutputNotUtf8};
 
 static SIO2JAIL_PATH: OnceLock<PathBuf> = OnceLock::new();
 static TEMPFILE_POOL: Lazy<ArrayQueue<PathBuf>> = Lazy::new(|| { ArrayQueue::new(num_cpus::get() * 10) });
@@ -109,84 +105,84 @@ pub fn compile_cpp(
 	Ok((executable_path, compilation_time))
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub fn generate_output_sio2jail(
-	executable_path: &Path,
-	input_source: &TestInputSource,
-	output_file: File,
-	timeout: &u64,
-	memory_limit: &u64,
-	sio2jail_output_file_path: &Path,
-	sio2jail_output_file: File,
-	error_file_path: &Path,
-	error_file: File
-) -> (ExecutionMetrics, Result<(), ExecutionError>) {
-	let mut command = Command::new(SIO2JAIL_PATH.get().expect("Sio2jail was not properly initialized!"))
-		.args(["-f", "3", "-o", "oiaug", "--mount-namespace", "off", "--pid-namespace", "off", "--uts-namespace", "off", "--ipc-namespace", "off", "--net-namespace", "off", "--capability-drop", "off", "--user-namespace", "off", "-s", "-m", &memory_limit.to_string(), "--", executable_path ])
-		.fd_mappings(vec![FdMapping {
-			parent_fd: sio2jail_output_file.as_raw_fd(),
-			child_fd: 3
-		}]).expect("Failed to redirect file descriptor 3!")
-		.stdout(output_file)
-		.stderr(error_file);
-
-	match input_source {
-		TestInputSource::File(path) => {
-			command.stdin(path);
-		}
-	}
-
-	let mut child = command.spawn().expect("Failed to run file!");
-
-	let status = child.wait_timeout(Duration::from_secs(*timeout)).unwrap();
-	let Some(status) = status else {
-		child.kill().unwrap();
-		return (ExecutionMetrics { time_seconds: *timeout as f64, memory_kilobytes: None }, Err(TimedOut));
-	};
-
-	let error_output = fs::read_to_string(error_file_path).expect("Couldn't read sio2jail error output");
-	if !error_output.is_empty() {
-		return if error_output == "terminate called after throwing an instance of 'std::bad_alloc'\n  what():  std::bad_alloc\n" {
-			(ExecutionMetrics { time_seconds: 0f64, memory_kilobytes: Some(*memory_limit as i64) }, Err(MemoryLimitExceeded))
-		} else {
-			(ExecutionMetrics { time_seconds: 0f64, memory_kilobytes: None }, Err(Sio2jailError(error_output)))
-		}
-	}
-
-	let sio2jail_output = fs::read_to_string(sio2jail_output_file_path).expect("Couldn't read temporary sio2jail file");
-	let split: Vec<&str> = sio2jail_output.split_whitespace().collect();
-	if split.len() < 6 {
-		return (ExecutionMetrics { time_seconds: 0f64, memory_kilobytes: None }, Err(Sio2jailError(format!("The sio2jail output is too short: {}", sio2jail_output))));
-	}
-	let sio2jail_status = split[0];
-	let time_seconds = split[2].parse::<f64>().expect("Sio2jail returned an invalid runtime in the output") / 1000.0;
-	let memory_kilobytes = split[4].parse::<i64>().expect("Sio2jail returned invalid memory usage in the output");
-	let error_message = sio2jail_output.lines().nth(1);
-
-	match status.code() {
-		None => {
-			#[cfg(all(unix))]
-			if cfg!(unix) && status.signal().expect("Sio2jail returned an invalid status code!") == 2 {
-				thread::sleep(Duration::from_secs(u64::MAX));
-			}
-
-			return (ExecutionMetrics { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, Err(RuntimeError(format!    ("- the process was terminated with the following error:\n{}", status.to_string()))))
-		}
-		Some(0) => {}
-		Some(exit_code) => {
-			return (ExecutionMetrics { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, Err(Sio2jailError(format!("Sio2jail returned an invalid status code: {}", exit_code))) );
-		}
-	}
-
-	return (ExecutionMetrics { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, match sio2jail_status {
-		"OK" => Ok(()),
-		"RE" | "RV" => Err(RuntimeError(error_message.and_then(|message| Some(format!("- {}", message))).unwrap_or(String::new()))),
-		"TLE" => Err(TimedOut),
-		"MLE" => Err(MemoryLimitExceeded),
-		"OLE" => Err(RuntimeError(format!("- output limit exceeded"))),
-		_ => Err(Sio2jailError(format!("Sio2jail returned an invalid status in the output: {}", sio2jail_status)))
-	});
-}
+// #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+// pub fn generate_output_sio2jail(
+// 	executable_path: &Path,
+// 	input_source: &TestInputSource,
+// 	output_file: File,
+// 	timeout: &u64,
+// 	memory_limit: &u64,
+// 	sio2jail_output_file_path: &Path,
+// 	sio2jail_output_file: File,
+// 	error_file_path: &Path,
+// 	error_file: File
+// ) -> (ExecutionMetrics, Result<(), ExecutionError>) {
+// 	let mut command = Command::new(SIO2JAIL_PATH.get().expect("Sio2jail was not properly initialized!"))
+// 		.args(["-f", "3", "-o", "oiaug", "--mount-namespace", "off", "--pid-namespace", "off", "--uts-namespace", "off", "--ipc-namespace", "off", "--net-namespace", "off", "--capability-drop", "off", "--user-namespace", "off", "-s", "-m", &memory_limit.to_string(), "--", executable_path ])
+// 		.fd_mappings(vec![FdMapping {
+// 			parent_fd: sio2jail_output_file.as_raw_fd(),
+// 			child_fd: 3
+// 		}]).expect("Failed to redirect file descriptor 3!")
+// 		.stdout(output_file)
+// 		.stderr(error_file);
+//
+// 	match input_source {
+// 		TestInputSource::File(path) => {
+// 			command.stdin(path);
+// 		}
+// 	}
+//
+// 	let mut child = command.spawn().expect("Failed to run file!");
+//
+// 	let status = child.wait_timeout(Duration::from_secs(*timeout)).unwrap();
+// 	let Some(status) = status else {
+// 		child.kill().unwrap();
+// 		return (ExecutionMetrics { time_seconds: *timeout as f64, memory_kilobytes: None }, Err(TimedOut));
+// 	};
+//
+// 	let error_output = fs::read_to_string(error_file_path).expect("Couldn't read sio2jail error output");
+// 	if !error_output.is_empty() {
+// 		return if error_output == "terminate called after throwing an instance of 'std::bad_alloc'\n  what():  std::bad_alloc\n" {
+// 			(ExecutionMetrics { time_seconds: 0f64, memory_kilobytes: Some(*memory_limit as i64) }, Err(MemoryLimitExceeded))
+// 		} else {
+// 			(ExecutionMetrics { time_seconds: 0f64, memory_kilobytes: None }, Err(Sio2jailError(error_output)))
+// 		}
+// 	}
+//
+// 	let sio2jail_output = fs::read_to_string(sio2jail_output_file_path).expect("Couldn't read temporary sio2jail file");
+// 	let split: Vec<&str> = sio2jail_output.split_whitespace().collect();
+// 	if split.len() < 6 {
+// 		return (ExecutionMetrics { time_seconds: 0f64, memory_kilobytes: None }, Err(Sio2jailError(format!("The sio2jail output is too short: {}", sio2jail_output))));
+// 	}
+// 	let sio2jail_status = split[0];
+// 	let time_seconds = split[2].parse::<f64>().expect("Sio2jail returned an invalid runtime in the output") / 1000.0;
+// 	let memory_kilobytes = split[4].parse::<i64>().expect("Sio2jail returned invalid memory usage in the output");
+// 	let error_message = sio2jail_output.lines().nth(1);
+//
+// 	match status.code() {
+// 		None => {
+// 			#[cfg(all(unix))]
+// 			if cfg!(unix) && status.signal().expect("Sio2jail returned an invalid status code!") == 2 {
+// 				thread::sleep(Duration::from_secs(u64::MAX));
+// 			}
+//
+// 			return (ExecutionMetrics { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, Err(RuntimeError(format!    ("- the process was terminated with the following error:\n{}", status.to_string()))))
+// 		}
+// 		Some(0) => {}
+// 		Some(exit_code) => {
+// 			return (ExecutionMetrics { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, Err(Sio2jailError(format!("Sio2jail returned an invalid status code: {}", exit_code))) );
+// 		}
+// 	}
+//
+// 	return (ExecutionMetrics { time_seconds, memory_kilobytes: Some(memory_kilobytes) }, match sio2jail_status {
+// 		"OK" => Ok(()),
+// 		"RE" | "RV" => Err(RuntimeError(error_message.and_then(|message| Some(format!("- {}", message))).unwrap_or(String::new()))),
+// 		"TLE" => Err(TimedOut),
+// 		"MLE" => Err(MemoryLimitExceeded),
+// 		"OLE" => Err(RuntimeError(format!("- output limit exceeded"))),
+// 		_ => Err(Sio2jailError(format!("Sio2jail returned an invalid status in the output: {}", sio2jail_status)))
+// 	});
+// }
 
 // pub fn checker_verify(
 // 	test_name: &str,
@@ -316,38 +312,33 @@ pub fn generate_output_sio2jail(
 //
 // 		result
 // 	} else {
-// 		let correct_output_file_path = output_dir.join(format!("{}{}", &test_name, &out_extension));
-// 		if !correct_output_file_path.is_file() {
-// 			return (NoOutputFile { test_name: test_name.to_string() }, ExecutionMetrics { time_seconds: 0f64, memory_kilobytes: None });
-// 		}
-// 		let correct_output = fs::read_to_string(correct_output_file_path).expect("Failed to read output file!");
-//
-// 		let is_correct = split_trim_end(&test_output) == split_trim_end(&correct_output);
-// 		if is_correct {
-// 			(Correct { test_name: test_name.to_string() }, execution_result)
-// 		} else {
-// 			(Incorrect { test_name: test_name.to_string(), error: generate_diff(correct_output, test_output) }, execution_result)
-// 		}
+
 // 	}
 // }
 
-fn split_trim_end(to_split: &str) -> Vec<String> {
-	let mut res: Vec<String> = Vec::new();
-
-	let mut current_string = String::new();
-	for ch in to_split.chars() {
-		if ch == '\n' {
-			res.push(current_string.trim_end().to_string());
-			current_string = String::new();
-		}
-		else {
-			current_string.push(ch);
-		}
+pub(crate) fn compare_output(expected_output_path: &Path, actual_output: Vec<u8>) -> Result<(), TestError> {
+	if !expected_output_path.is_file() {
+		return Err(NoOutputFile);
 	}
+	let expected_output = fs::read_to_string(expected_output_path).expect("Failed to read output file!");
+	let Ok(actual_output) = String::from_utf8(actual_output) else {
+		return Err(OutputNotUtf8);
+	};
 
-	if !current_string.is_empty() {
-		res.push(current_string.trim_end().to_string());
+	let expected_output = split_trim_end(&expected_output);
+	let actual_output = split_trim_end(&actual_output);
+
+	if actual_output != expected_output {
+		return Err(Incorrect { error: generate_diff(&expected_output, &actual_output) });
 	}
+	Ok(())
+}
+
+fn split_trim_end(to_split: &str) -> Vec<&str> {
+	let mut res = to_split
+		.split('\n')
+		.map(|line| line.trim_end())
+		.collect::<Vec<&str>>();
 
 	while res.last().is_some_and(|last| last.trim().is_empty()) {
 		res.pop();
@@ -356,10 +347,7 @@ fn split_trim_end(to_split: &str) -> Vec<String> {
 	return res;
 }
 
-fn generate_diff(correct_answer: String, incorrect_answer: String) -> String {
-	let correct_split = split_trim_end(&correct_answer);
-	let incorrect_split = split_trim_end(&incorrect_answer);
-
+fn generate_diff(expected_split: &[&str], actual_split: &[&str]) -> String {
 	let (Width(w), Height(_)) = terminal_size::terminal_size().unwrap_or((Width(40), Height(0)));
 	let mut table = Table::new();
 	table.set_content_arrangement(Dynamic).set_width(w).set_header(vec![
@@ -369,15 +357,15 @@ fn generate_diff(correct_answer: String, incorrect_answer: String) -> String {
 	]);
 
 	let mut row_count = 0;
-	for i in 0..max(correct_split.len(), incorrect_split.len()) {
-		let file_segment = if correct_split.len() > i { correct_split[i].clone() } else { "".to_string() };
-		let out_segment = if incorrect_split.len() > i { incorrect_split[i].clone() } else { "".to_string() };
+	for i in 0..max(expected_split.len(), actual_split.len()) {
+		let expected_line = expected_split.get(i).unwrap_or(&"");
+		let actual_line = actual_split.get(i).unwrap_or(&"");
 
-		if file_segment != out_segment {
+		if expected_line != actual_line {
 			table.add_row(vec![
 				Cell::new(i + 1),
-				Cell::new(file_segment).fg(Color::Green),
-				Cell::new(out_segment).fg(Color::Red)
+				Cell::new(expected_line).fg(Color::Green),
+				Cell::new(actual_line).fg(Color::Red)
 			]);
 
 			row_count += 1;

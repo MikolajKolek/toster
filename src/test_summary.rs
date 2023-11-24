@@ -1,8 +1,10 @@
 use std::cmp::Ordering;
+use std::time::Duration;
 use colored::Color::{Blue, Green, Red, Yellow};
 use colored::{Color, Colorize};
-use crate::test_result::{ExecutionError, TestResult};
-use crate::test_result::TestResult::*;
+use crate::generic_utils::OptionExt;
+use crate::test_errors::{ExecutionError, ExecutionMetrics, TestError};
+use crate::test_errors::TestError::*;
 
 pub(crate) struct TestSummary {
     generate_mode: bool,
@@ -18,7 +20,10 @@ pub(crate) struct TestSummary {
     pub(crate) checker_error: usize,
     pub(crate) no_output_file: usize,
 
-    incorrect_test_results: Vec<TestResult>,
+    test_errors: Vec<(String, TestError)>,
+
+    pub(crate) slowest_test: Option<(Duration, String)>,
+    pub(crate) most_memory_used: Option<(i64, String)>,
 }
 
 struct CountPart<'a> {
@@ -77,32 +82,45 @@ impl TestSummary {
             no_output_file: 0,
             success: 0,
 
-            incorrect_test_results: vec![],
+            test_errors: vec![],
+
+            slowest_test: None,
+            most_memory_used: None,
         }
     }
 
-    pub(crate) fn increment_success(&mut self) {
+    pub(crate) fn add_success(&mut self, metrics: &ExecutionMetrics, test_name: &str) {
         self.total += 1;
         self.success += 1;
+        self.add_metrics(metrics, test_name);
     }
 
-    pub(crate) fn add_test_result(&mut self, result: TestResult) {
+    pub(crate) fn add_test_error(&mut self, error: TestError, test_name: String) {
         self.total += 1;
-        match result {
-            Correct { .. } => { self.success += 1 }
+        match error {
             Incorrect { .. } => { self.incorrect += 1 }
             ProgramError { error: ExecutionError::TimedOut, .. } => { self.timed_out += 1 }
-            ProgramError { error: ExecutionError::InvalidOutput, .. } => { self.invalid_output += 1 }
             ProgramError { error: ExecutionError::MemoryLimitExceeded, .. } => { self.memory_limit_exceeded += 1 }
             ProgramError { error: ExecutionError::RuntimeError(_), .. } => { self.runtime_error += 1 }
             ProgramError { error: ExecutionError::Sio2jailError(_), .. } => { self.sio2jail_error += 1 }
             ProgramError { error: ExecutionError::IncorrectCheckerFormat(_), .. } => { self.checker_error += 1 }
+            ProgramError { error: ExecutionError::OutputStreamError } => { self.invalid_output += 1 }
             CheckerError { .. } => { self.checker_error += 1 }
             NoOutputFile { .. } => { self.no_output_file += 1 }
+            OutputNotUtf8 => { self.invalid_output += 1 }
+        }
+        self.test_errors.push((test_name, error));
+    }
+
+    fn add_metrics(&mut self, metrics: &ExecutionMetrics, test_name: &str) {
+        if self.slowest_test.is_none_or(|(time, _)| &metrics.time > time) {
+            self.slowest_test = Some((metrics.time, test_name.to_string()));
         }
 
-        if !result.is_correct() {
-            self.incorrect_test_results.push(result);
+        if let Some(new_memory) = &metrics.memory_kilobytes {
+            if self.most_memory_used.is_none_or(|(memory, _)| new_memory > memory) {
+                self.most_memory_used = Some((*new_memory, test_name.to_string()));
+            }
         }
     }
 
@@ -128,10 +146,10 @@ impl TestSummary {
             .join(", ")
     }
 
-    pub(crate) fn get_incorrect_results(&mut self) -> &Vec<TestResult> {
-        self.incorrect_test_results.sort_unstable_by(|a, b| -> Ordering {
-            human_sort::compare(&a.test_name(), &b.test_name())
+    pub(crate) fn get_errors(&mut self) -> &Vec<(String, TestError)> {
+        self.test_errors.sort_unstable_by(|a, b| -> Ordering {
+            human_sort::compare(&a.0, &b.0)
         });
-        &self.incorrect_test_results
+        &self.test_errors
     }
 }
