@@ -4,9 +4,9 @@ mod testing_utils;
 mod prepare_input;
 mod run;
 mod generic_utils;
+mod test_summary;
 
 use std::{fs, panic, process, thread};
-use std::cmp::Ordering;
 use std::ffi::OsStr;
 use std::fmt::Write as FmtWrite;
 use std::fs::File;
@@ -18,7 +18,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::atomic::Ordering::{Acquire, Release};
 use std::time::{Duration, Instant};
-use atomic_counter::{AtomicCounter, RelaxedCounter};
 use clap::Parser;
 use colored::Colorize;
 use human_panic::{handle_dump, print_msg};
@@ -32,24 +31,14 @@ use args::Args;
 use crate::generic_utils::OptionExt;
 use crate::prepare_input::prepare_file_inputs;
 use crate::run::BasicTestRunner;
-use crate::test_result::{ExecutionError, TestResult};
+use crate::test_result::TestResult;
+use crate::test_summary::TestSummary;
 use crate::testing_utils::{compile_cpp, fill_tempfile_pool, init_sio2jail};
 use crate::TestResult::{Correct, ProgramError, Incorrect};
 
 lazy_static! {
-    static ref SUCCESS_COUNT: RelaxedCounter = RelaxedCounter::new(0);
-	static ref INCORRECT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
-    static ref TIMED_OUT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
-	static ref INVALID_OUTPUT_COUNT: RelaxedCounter = RelaxedCounter::new(0);
-    static ref MEMORY_LIMIT_EXCEEDED_COUNT: RelaxedCounter = RelaxedCounter::new(0);
-    static ref RUNTIME_ERROR_COUNT: RelaxedCounter = RelaxedCounter::new(0);
-	static ref SIO2JAIL_ERROR_COUNT: RelaxedCounter = RelaxedCounter::new(0);
-	static ref CHECKER_ERROR_COUNT: RelaxedCounter = RelaxedCounter::new(0);
-    static ref NO_OUTPUT_FILE_COUNT: RelaxedCounter = RelaxedCounter::new(0);
-
     static ref SLOWEST_TEST: Arc<Mutex<Option<(Duration, String)>>> = Arc::new(Mutex::new(None));
     static ref MOST_MEMORY_USED: Arc<Mutex<Option<(i64, String)>>> = Arc::new(Mutex::new(None));
-    static ref ERRORS: Arc<Mutex<Vec<TestResult>>> = Arc::new(Mutex::new(vec![]));
 }
 
 static TIME_BEFORE_TESTING: OnceLock<Instant> = OnceLock::new();
@@ -59,40 +48,11 @@ static GENERATE: AtomicBool = AtomicBool::new(false);
 static RECEIVED_CTRL_C: AtomicBool = AtomicBool::new(false);
 static PANICKING: AtomicBool = AtomicBool::new(false);
 
-fn format_error_counts() -> String {
-	let mut res = [
-		(INCORRECT_COUNT.get(), if INCORRECT_COUNT.get() > 1 { "wrong answers" } else { "wrong answer" }, ),
-		(TIMED_OUT_COUNT.get(), "timed out"),
-		(INVALID_OUTPUT_COUNT.get(), if INVALID_OUTPUT_COUNT.get() > 1 { "invalid outputs" } else { "invalid output" }),
-		(MEMORY_LIMIT_EXCEEDED_COUNT.get(), "out of memory"),
-		(RUNTIME_ERROR_COUNT.get(), if RUNTIME_ERROR_COUNT.get() > 1 { "runtime errors" } else { "runtime error" }),
-		(NO_OUTPUT_FILE_COUNT.get(), if NO_OUTPUT_FILE_COUNT.get() > 1 { "without output files" } else { "without output file" }),
-		(SIO2JAIL_ERROR_COUNT.get(), if SIO2JAIL_ERROR_COUNT.get() > 1 { "sio2jail errors" } else { "sio2jail error" })
-	]
-		.into_iter()
-		.filter(|(count, _)| count > &0)
-		.map(|(count, label)| format!("{} {}", count.to_string().red(), label.to_string().red()))
-		.collect::<Vec<String>>()
-		.join(", ");
-
-	if CHECKER_ERROR_COUNT.get() > 0 {
-		res += &format!("{}{}{}",
-		                if res.is_empty() { "" } else { ", " },
-		                CHECKER_ERROR_COUNT.get().to_string().blue(),
-		                (if CHECKER_ERROR_COUNT.get() > 1 { " checker errors" } else { " checker error" }).blue()
-		);
-	}
-
-	res
-}
-
-fn print_output(stopped_early: bool) {
-	let slowest_test_clone = Arc::clone(&SLOWEST_TEST);
-	let errors_clone = Arc::clone(&ERRORS);
-	let most_memory_clone = Arc::clone(&MOST_MEMORY_USED);
-	let slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");
-	let mut errors_mutex = errors_clone.lock().expect("Failed to acquire mutex!");
-	let most_memory_mutex = most_memory_clone.lock().expect("Failed to acquire mutex!");
+fn print_output(stopped_early: bool, test_summary: &mut TestSummary) {
+	// let slowest_test_clone = Arc::clone(&SLOWEST_TEST);
+	// let most_memory_clone = Arc::clone(&MOST_MEMORY_USED);
+	// let slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");
+	// let most_memory_mutex = most_memory_clone.lock().expect("Failed to acquire mutex!");
 
 	if TIME_BEFORE_TESTING.get().is_none() {
 		println!("{}", "Toster was stopped before testing could start".red());
@@ -100,10 +60,9 @@ fn print_output(stopped_early: bool) {
 	}
 
 	let testing_time = TIME_BEFORE_TESTING.get().unwrap().elapsed().as_secs_f64();
-	let tested_count = SUCCESS_COUNT.get() + TIMED_OUT_COUNT.get() + INCORRECT_COUNT.get() + MEMORY_LIMIT_EXCEEDED_COUNT.get() + INVALID_OUTPUT_COUNT.get() + RUNTIME_ERROR_COUNT.get() + NO_OUTPUT_FILE_COUNT.get() + SIO2JAIL_ERROR_COUNT.get() + CHECKER_ERROR_COUNT.get();
-	let not_tested_count = &TEST_COUNT.load(Acquire) - tested_count;
+	let not_tested_count = &TEST_COUNT.load(Acquire) - test_summary.total;
 
-	let error_counts = format_error_counts();
+	let error_counts = test_summary.format_error_counts();
 	let error_text = format!("{}{}", if !error_counts.is_empty() {", "} else {""}, error_counts);
 	let not_finished_text = if not_tested_count > 0 {format!(", {}", (not_tested_count.to_string() + " not finished").yellow())} else {"".to_string()};
 
@@ -112,13 +71,13 @@ fn print_output(stopped_early: bool) {
 	}
 
 	let mut additional_info = String::new();
-	if slowest_test_mutex.0 != -1f64 {
-		additional_info = format!(" (Slowest test: {} at {:.3}s{})",
-		                          slowest_test_mutex.1,
-		                          slowest_test_mutex.0,
-		                          if most_memory_mutex.0 != -1 { format!(", most memory used: {} at {}KiB", most_memory_mutex.1, most_memory_mutex.0) } else { String::new() }
-		)
-	}
+	// if slowest_test_mutex.0 != -1f64 {
+	// 	additional_info = format!(" (Slowest test: {} at {:.3}s{})",
+	// 	                          slowest_test_mutex.1,
+	// 	                          slowest_test_mutex.0,
+	// 	                          if most_memory_mutex.0 != -1 { format!(", most memory used: {} at {}KiB", most_memory_mutex.1, most_memory_mutex.0) } else { String::new() }
+	// 	)
+	// }
 
 	// Printing the output
 	match GENERATE.load(Acquire) {
@@ -127,7 +86,7 @@ fn print_output(stopped_early: bool) {
 			         if stopped_early {"stopped after"} else {"finished in"},
 			         testing_time,
 			         additional_info,
-			         format!("{} successful", SUCCESS_COUNT.get()).green(),
+			         format!("{} successful", test_summary.success).green(),
 			         error_text,
 			         not_finished_text
 			);
@@ -137,23 +96,18 @@ fn print_output(stopped_early: bool) {
 			         if stopped_early {"stopped after"} else {"finished in"},
 			         testing_time,
 			         additional_info,
-			         format!("{} correct", SUCCESS_COUNT.get()).green(),
+			         format!("{} correct", test_summary.success).green(),
 			         error_text,
 			         not_finished_text
 			);
 		}
 	}
 
-	// Printing errors if necessary
-	if !errors_mutex.is_empty() {
-		// Sorting the errors by name
-		errors_mutex.sort_unstable_by(|a, b| -> Ordering {
-			return human_sort::compare(&a.test_name(), &b.test_name());
-		});
-
+	let incorrect_results=  test_summary.get_incorrect_results();
+	if !incorrect_results.is_empty() {
 		println!("Errors were found in the following tests:");
 
-		for test_error in errors_mutex.iter() {
+		for test_error in incorrect_results.iter() {
 			println!("{}", test_error.to_string());
 		}
 	}
@@ -191,9 +145,13 @@ fn check_ctrlc() -> Option<()> {
 
 fn main() {
 	setup_panic();
+
+	let mut test_summary = Arc::new(Mutex::new(TestSummary::new()));
+
+	let test_summary_1 = test_summary.clone();
 	ctrlc::set_handler(move || {
 		RECEIVED_CTRL_C.store(true, Release);
-		print_output(true)
+		print_output(true, &mut test_summary_1.lock().expect("Failed to lock test summary mutex"));
 	}).expect("Error setting Ctrl-C handler");
 
 	let tempdir = tempdir().expect("Failed to create temporary directory!");
@@ -333,15 +291,18 @@ fn main() {
 	};
 
 	// Progress bar styling
+	let test_summary_2 = test_summary.clone();
+	let test_summary_3 = test_summary.clone();
 	let style: ProgressStyle = ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{correct} {incorrect} {ctrlc}")
 		.expect("Progress bar creation failed!")
 		.with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed!"))
 		.progress_chars("#>-")
-		.with_key("correct", |_state: &ProgressState, w: &mut dyn FmtWrite|
-			write!(w, "{}", format!("{} {}", &SUCCESS_COUNT.get(), if GENERATE.load(Acquire) { "successful" } else { if SUCCESS_COUNT.get() != 1 { "correct answers" } else { "correct answer" } }).green()).expect("Displaying the progress bar failed!")
-		)
-		.with_key("incorrect", |_state: &ProgressState, w: &mut dyn FmtWrite|
-			write!(w, "{}", format_error_counts()).expect("Displaying the progress bar failed!")
+		.with_key("correct", move |_state: &ProgressState, w: &mut dyn FmtWrite| {
+			let success_counts = test_summary_2.lock().expect("Failed to lock test summary mutex").success;
+			write!(w, "{}", format!("{} {}", &success_counts, if GENERATE.load(Acquire) { "successful" } else { if success_counts != 1 { "correct answers" } else { "correct answer" } }).green()).expect("Displaying the progress bar failed!")
+		})
+		.with_key("incorrect", move |_state: &ProgressState, w: &mut dyn FmtWrite|
+			write!(w, "{}", test_summary_3.lock().expect("Failed to lock test summary mutex").format_error_counts()).expect("Displaying the progress bar failed!")
 		)
 		.with_key("ctrlc", |_state: &ProgressState, w: &mut dyn FmtWrite|
 			write!(w, "{}", "(Press Ctrl+C to stop testing and print current results)".bright_black()).expect("Displaying the progress bar Ctrl+C message failed!")
@@ -394,22 +355,16 @@ fn main() {
 		check_ctrlc();
 
 		let output = match output {
-			Ok(output) => { output }
+			Ok(output) => {
+				test_summary.lock().expect("Failed to lock test summary mutex").increment_success();
+				output
+			}
 			Err(error) => {
-				match error {
-					ExecutionError::TimedOut => { TIMED_OUT_COUNT.inc(); }
-					ExecutionError::InvalidOutput => { INVALID_OUTPUT_COUNT.inc(); }
-					ExecutionError::MemoryLimitExceeded => { MEMORY_LIMIT_EXCEEDED_COUNT.inc(); }
-					ExecutionError::RuntimeError(_) => { RUNTIME_ERROR_COUNT.inc(); }
-					ExecutionError::Sio2jailError(_) => { SIO2JAIL_ERROR_COUNT.inc(); }
-					ExecutionError::IncorrectCheckerFormat(_) => { CHECKER_ERROR_COUNT.inc(); }
-				}
-				let clone = Arc::clone(&ERRORS);
-				clone.lock().expect("Failed to acquire mutex!").push(ProgramError { test_name: input.test_name.clone(), error });
-				return;
+				let program_error = ProgramError { test_name: input.test_name.clone(), error };
+				test_summary.lock().expect("Failed to lock test summary mutex").add_test_result(program_error);
+				return Some(());
 			}
 		};
-		SUCCESS_COUNT.inc();
 
 		let slowest_test_clone = Arc::clone(&SLOWEST_TEST);
 		let mut slowest_test_mutex = slowest_test_clone.lock().expect("Failed to acquire mutex!");
@@ -442,5 +397,5 @@ fn main() {
 		Some(())
 	});
 
-	print_output(false)
+	print_output(false, &mut test_summary.lock().expect("Failed to lock test summary mutex"));
 }

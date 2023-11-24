@@ -10,6 +10,7 @@ use crate::test_result::{ExecutionError, ExecutionMetrics};
 
 #[cfg(all(unix))]
 use std::os::unix::process::ExitStatusExt;
+use std::thread::JoinHandle;
 
 pub(crate) struct BasicTestRunner {
     pub(crate) timeout: Duration,
@@ -51,37 +52,36 @@ impl BasicTestRunner {
         }
     }
 
-    fn read_output_async(stream: &mut Option<ChildStdout>) {
+    fn read_output_async(stream: &mut Option<ChildStdout>) -> JoinHandle<io::Result<Vec<u8>>> {
+        let stream = stream.take();
         thread::spawn(|| -> io::Result<Vec<u8>> {
             let mut buffer: Vec<u8> = Vec::new();
-            if let Some(mut stream) = stream.take() {
+            if let Some(mut stream) = stream {
                 stream.read_to_end(&mut buffer)?;
             }
             return Ok(buffer)
-        });
+        })
     }
 
     // pub fn test_to_file(&self, input_source: &TestInputSource, output_path: &Path) -> (ExecutionMetrics, Result<(), ExecutionError>) {
-    //     let mut command = Command::new(&self.executable_path)
+    //     let child = Command::new(&self.executable_path)
     //         .stdin(input_source.get_stdin())
     //         .stdout(output_path)
-    //         .stderr(Stdio::null());
-    //
-    //     let child = command.spawn().expect("Failed to spawn child");
+    //         .stderr(Stdio::null())
+    //         .spawn().expect("Failed to spawn child");
     //     self.wait_for_child(child)
     // }
 
     pub fn test_to_vec(&self, input_source: &TestInputSource) -> (ExecutionMetrics, Result<Vec<u8>, ExecutionError>) {
-        let mut command = Command::new(&self.executable_path)
+        let mut child = Command::new(&self.executable_path)
             .stdin(input_source.get_stdin())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-
-        let mut child = command.spawn().expect("Failed to spawn child");
+            .stderr(Stdio::null())
+            .spawn().expect("Failed to spawn child");
         let output_handle = BasicTestRunner::read_output_async(&mut child.stdout);
 
         let (metrics, result) = self.wait_for_child(child);
         let output = output_handle.join().expect("Output thread panicked");
-        (metrics, result.and_then(|| output.map_err(|| InvalidOutput)))
+        (metrics, result.and_then(|_| output.map_err(|_| InvalidOutput)))
     }
 }

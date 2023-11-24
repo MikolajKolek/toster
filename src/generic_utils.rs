@@ -1,5 +1,5 @@
 pub(crate) trait OptionExt<T> {
-    fn is_none_or<F: FnOnce(T) -> bool>(&self, fun: F) -> bool;
+    fn is_none_or<F: FnOnce(&T) -> bool>(&self, fun: F) -> bool;
 }
 
 impl<T> OptionExt<T> for Option<T> {
