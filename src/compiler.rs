@@ -1,5 +1,4 @@
 use std::{fs, io};
-use std::fs::File;
 use std::io::ErrorKind::NotFound;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -8,6 +7,7 @@ use is_executable::is_executable;
 use tempfile::TempDir;
 use wait_timeout::ChildExt;
 use crate::compiler::CompilationResult::*;
+use crate::pipes::BufferedPipe;
 
 pub(crate) enum CompilationResult {
     Success(PathBuf, Option<Duration>),
@@ -35,13 +35,11 @@ impl<'a> Compiler<'a> {
             .replace("<OUT>", &executable_path.to_str().expect("The provided filename is invalid"));
         let mut split_cmd = cmd.split(" ");
 
-        // TODO: Don't use a file for result storage
-        let compilation_result_path = self.tempdir.path().join(format!("{}.out", source_path.file_stem().expect("The provided filename is invalid!").to_string_lossy()));
-        let compilation_result_file = File::create(&compilation_result_path).expect("Failed to create temporary file!");
+        let mut stderr = BufferedPipe::create().expect("Failed to create stderr pipe");
         let time_before_compilation = Instant::now();
         let child = Command::new(&split_cmd.next().expect("The compile command is invalid!"))
             .args(split_cmd)
-            .stderr(compilation_result_file)
+            .stderr(stderr.get_stdio())
             .spawn();
 
         let mut child = match child {
@@ -53,7 +51,7 @@ impl<'a> Compiler<'a> {
         match child.wait_timeout(self.compile_timeout).unwrap() {
             Some(status) => {
                 if status.code().expect("The compiler returned an invalid status code") != 0 {
-                    let compilation_result = fs::read_to_string(&compilation_result_path).expect("Failed to read compiler output");
+                    let compilation_result = stderr.join().expect("Failed to read compiler output");
                     return Err(compilation_result);
                 }
             }

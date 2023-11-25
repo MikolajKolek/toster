@@ -25,6 +25,7 @@ pub enum TestError {
 }
 
 #[allow(unused)]
+#[derive(Debug)]
 pub enum ExecutionError {
 	TimedOut,
 	MemoryLimitExceeded,
