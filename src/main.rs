@@ -144,7 +144,7 @@ fn main() {
 		compile_command: &config.compile_command,
 	};
 
-	let executable = match compiler.prepare_executable(&config.source_path) {
+	let executable = match compiler.prepare_executable(&config.source_path, "program") {
 		CompilationResult::Success(compiled_executable, compilation_time) => {
 			if let Some(compilation_time) = compilation_time {
 				println!("{}", format!("Program compilation completed in {:.2}s", compilation_time.as_secs_f32()).green());
@@ -164,7 +164,7 @@ fn main() {
 	};
 
 	let checker_executable = if let ActionType::Checker { path } = &config.action_type {
-		match compiler.prepare_executable(path) {
+		match compiler.prepare_executable(path, "checker") {
 			CompilationResult::Success(compiled_executable, compilation_time) => {
 				if let Some(compilation_time) = compilation_time {
 					println!("{}", format!("Checker compilation completed in {:.2}s", compilation_time.as_secs_f32()).green());

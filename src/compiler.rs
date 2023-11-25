@@ -71,9 +71,9 @@ impl<'a> Compiler<'a> {
             })
     }
 
-    pub(crate) fn prepare_executable(&self, source_path: &Path) -> CompilationResult {
-        let source_stem = source_path.file_stem().expect("The provided filename is invalid!");
-        let output_path = self.tempdir.path().join(format!("{}.o", source_stem.to_string_lossy()));
+    pub(crate) fn prepare_executable(&self, source_path: &Path, name: &'static str) -> CompilationResult {
+        debug_assert!(PathBuf::from(name).extension() == None);
+        let output_path = self.tempdir.path().join(format!("{}.o", name));
 
         if !Self::is_source_file(source_path) {
             fs::copy(source_path, &output_path).expect("The provided filename is invalid");
