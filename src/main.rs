@@ -8,9 +8,9 @@ mod test_summary;
 mod pipes;
 mod checker;
 mod compiler;
+mod output;
 
 use std::{fs, panic};
-use std::fmt::Write as FmtWrite;
 use std::panic::PanicInfo;
 use std::process::exit;
 use std::sync::{Arc, Mutex};
@@ -19,7 +19,7 @@ use std::sync::atomic::Ordering::{Acquire, Release};
 use clap::Parser;
 use colored::Colorize;
 use human_panic::{handle_dump, print_msg};
-use indicatif::{ParallelProgressIterator, ProgressBar, ProgressState, ProgressStyle};
+use indicatif::ParallelProgressIterator;
 use rayon::prelude::*;
 use tempfile::tempdir;
 use args::Args;
@@ -36,18 +36,19 @@ use crate::testing_utils::compare_output;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use crate::executor::sio2jail::Sio2jailExecutor;
 use crate::generic_utils::halt;
+use crate::output::{get_initial_spinner, get_progress_bar};
 
 static RECEIVED_CTRL_C: AtomicBool = AtomicBool::new(false);
 
 fn print_output(stopped_early: bool, test_summary: &mut Option<TestSummary>) {
+	if stopped_early {
+		println!();
+	}
+
 	let Some(test_summary) = test_summary else {
 		println!("{}", "Toster was stopped before testing could start".red());
 		exit(0);
 	};
-
-	if stopped_early {
-		println!();
-	}
 
 	let mut additional_info = String::new();
 	if let Some(slowest_test) = &test_summary.slowest_test {
@@ -130,6 +131,8 @@ fn main() {
 		}).expect("Error setting Ctrl-C handler");
 	}
 
+	let spinner = get_initial_spinner();
+
 	let tempdir = tempdir().expect("Failed to create temporary directory!");
 
 	if let ActionType::Generate { output_directory, .. } = &config.action_type {
@@ -144,10 +147,13 @@ fn main() {
 		compile_command: &config.compile_command,
 	};
 
+	spinner.set_message("Compiling program...");
 	let executable = match compiler.prepare_executable(&config.source_path, "program") {
 		CompilationResult::Success(compiled_executable, compilation_time) => {
 			if let Some(compilation_time) = compilation_time {
-				println!("{}", format!("Program compilation completed in {:.2}s", compilation_time.as_secs_f32()).green());
+				spinner.suspend(|| {
+					println!("{}", format!("Program compilation completed in {:.2}s", compilation_time.as_secs_f32()).green());
+				});
 			}
 			compiled_executable
 		}
@@ -164,10 +170,13 @@ fn main() {
 	};
 
 	let checker_executable = if let ActionType::Checker { path } = &config.action_type {
+		spinner.set_message("Compiling checker...");
 		match compiler.prepare_executable(path, "checker") {
 			CompilationResult::Success(compiled_executable, compilation_time) => {
 				if let Some(compilation_time) = compilation_time {
-					println!("{}", format!("Checker compilation completed in {:.2}s", compilation_time.as_secs_f32()).green());
+					spinner.suspend(|| {
+						println!("{}", format!("Checker compilation completed in {:.2}s", compilation_time.as_secs_f32()).green());
+					});
 				}
 				Some(compiled_executable)
 			}
@@ -191,6 +200,7 @@ fn main() {
 		}),
 		#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 		Sio2jail { memory_limit } => {
+			spinner.set_message("Preparing sio2jail...");
 			let runner = Sio2jailExecutor::init_and_test(
 				config.execute_timeout,
 				executable,
@@ -210,21 +220,7 @@ fn main() {
 		Checker::new(checker_executable, config.execute_timeout)
 	});
 
-	// Progress bar styling
-    let style: ProgressStyle = {
-        let test_summary = test_summary.clone();
-        ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{counts} {ctrlc}")
-            .expect("Progress bar creation failed!")
-            .with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed!"))
-            .progress_chars("#>-")
-            .with_key("counts", move |_state: &ProgressState, w: &mut dyn FmtWrite| {
-                write!(w, "{}", test_summary.lock().expect("Failed to lock test summary mutex").as_ref().unwrap().format_counts(false)).expect("Displaying the progress bar failed!")
-            })
-            .with_key("ctrlc", |_state: &ProgressState, w: &mut dyn FmtWrite|
-                write!(w, "{}", "(Press Ctrl+C to stop testing and print current results)".bright_black()).expect("Displaying the progress bar Ctrl+C message failed!")
-            )
-    };
-
+	spinner.set_message("Searching for input files...");
 	let inputs = match &config.input {
 		InputConfig::Directory { directory, ext } => {
 			prepare_file_inputs(directory, ext)
@@ -232,8 +228,9 @@ fn main() {
 	};
 	*test_summary.lock().expect("Failed to lock test summary mutex") = Some(TestSummary::new(config.generate_mode(), inputs.test_count));
 
-	let progress_bar = ProgressBar::new(inputs.test_count as u64).with_style(style);
-	inputs.iterator.progress_with(progress_bar).try_for_each(|input| -> Option<()> {
+	spinner.finish_and_clear();
+	let bar = get_progress_bar(&test_summary).with_elapsed(spinner.elapsed());
+	inputs.iterator.progress_with(bar).try_for_each(|input| -> Option<()> {
 		check_ctrlc()?;
 
 		let (metrics, output) = runner.test_to_string(input.input_source.get_stdin());
