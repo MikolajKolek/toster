@@ -1,62 +1,11 @@
 use std::cmp::max;
 use std::fs;
-use std::fs::File;
-use std::io::ErrorKind::NotFound;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{Duration, Instant};
+use std::path::Path;
 use comfy_table::{Attribute, Cell, Color, Table};
 use comfy_table::ContentArrangement::Dynamic;
-use tempfile::TempDir;
 use terminal_size::{Height, Width};
-use wait_timeout::ChildExt;
 use crate::test_errors::TestError;
 use crate::test_errors::TestError::{Incorrect, NoOutputFile};
-
-pub fn compile_cpp(
-	source_code_path: &Path,
-	tempdir: &TempDir,
-	compile_timeout: Duration,
-	compile_command: &str,
-) -> Result<(PathBuf, f64), String> {
-	let executable_file_base = source_code_path.file_stem().expect("The provided filename is invalid!");
-	let executable_path = tempdir.path().join(format!("{}.o", executable_file_base.to_str().expect("The provided filename is invalid!")));
-
-	let cmd = compile_command
-		.replace("<IN>", source_code_path.to_str().expect("The provided filename is invalid!"))
-		.replace("<OUT>", &executable_path.to_str().expect("The provided filename is invalid"));
-	let mut split_cmd = cmd.split(" ");
-
-	let compilation_result_path = tempdir.path().join(format!("{}.out", executable_file_base.to_str().expect("The provided filename is invalid!")));
-	let compilation_result_file = File::create(&compilation_result_path).expect("Failed to create temporary file!");
-	let time_before_compilation = Instant::now();
-	let child = Command::new(&split_cmd.nth(0).expect("The compile command is invalid!"))
-		.args(split_cmd)
-		.stderr(compilation_result_file)
-		.spawn();
-
-	let mut child = match child {
-		Ok(child) => child,
-		Err(error) if error.kind() == NotFound => { return Err("The compiler was not found!".to_string()) }
-		Err(error) => { return Err(error.to_string()) }
-	};
-
-	match child.wait_timeout(compile_timeout).unwrap() {
-		Some(status) => {
-			if status.code().expect("The compiler returned an invalid status code") != 0 {
-				let compilation_result = fs::read_to_string(&compilation_result_path).expect("Failed to read compiler output");
-				return Err(compilation_result);
-			}
-		}
-		None => {
-			child.kill().unwrap();
-			return Err("Compilation timed out".to_string());
-		}
-	}
-	let compilation_time = time_before_compilation.elapsed().as_secs_f64();
-
-	Ok((executable_path, compilation_time))
-}
 
 pub(crate) fn compare_output(expected_output_path: &Path, actual_output: &str) -> Result<(), TestError> {
 	if !expected_output_path.is_file() {

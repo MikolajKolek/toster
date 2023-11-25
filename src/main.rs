@@ -7,13 +7,12 @@ mod generic_utils;
 mod test_summary;
 mod pipes;
 mod checker;
+mod compiler;
 
 use std::{fs, panic};
-use std::ffi::OsStr;
 use std::fmt::Write as FmtWrite;
 use std::panic::PanicInfo;
-use std::path::PathBuf;
-use std::process::{Command, exit};
+use std::process::exit;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Acquire, Release};
@@ -21,19 +20,19 @@ use clap::Parser;
 use colored::Colorize;
 use human_panic::{handle_dump, print_msg};
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressState, ProgressStyle};
-use is_executable::is_executable;
 use rayon::prelude::*;
 use tempfile::tempdir;
 use args::Args;
 use crate::args::{ActionType, InputConfig, ParsedConfig};
 use crate::args::ExecuteMode::*;
 use crate::checker::Checker;
+use crate::compiler::{CompilationResult, Compiler};
 use crate::executor::simple::SimpleExecutor;
 use crate::prepare_input::prepare_file_inputs;
 use crate::executor::TestExecutor;
 use crate::test_errors::TestError::ProgramError;
 use crate::test_summary::TestSummary;
-use crate::testing_utils::{compare_output, compile_cpp};
+use crate::testing_utils::compare_output;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use crate::executor::sio2jail::Sio2jailExecutor;
 use crate::generic_utils::halt;
@@ -139,65 +138,51 @@ fn main() {
 		}
 	}
 
-	// Compiling
-	let extension = config.source_path.extension().unwrap_or(OsStr::new("")).to_str().expect("Couldn't get the extension of the provided file");
-	let executable: PathBuf = if !is_executable(&config.source_path) || (extension == "cpp" || extension == "cc" || extension == "cxx" || extension == "c") {
-		match compile_cpp(&config.source_path, &tempdir, config.compile_timeout, &config.compile_command) {
-			Ok((compiled_executable, compilation_time)) => {
-				println!("{}", format!("Compilation completed in {:.2}s", compilation_time).green());
-				compiled_executable
+	let compiler = Compiler {
+		tempdir: &tempdir,
+		compile_timeout: config.compile_timeout,
+		compile_command: &config.compile_command,
+	};
+
+	let executable = match compiler.prepare_executable(&config.source_path) {
+		CompilationResult::Success(compiled_executable, compilation_time) => {
+			if let Some(compilation_time) = compilation_time {
+				println!("{}", format!("Program compilation completed in {:.2}s", compilation_time.as_secs_f32()).green());
 			}
-			Err(error) => {
-				println!("{}", "Compilation failed with the following errors:".red());
+			compiled_executable
+		}
+		CompilationResult::InvalidExecutable(error) => {
+			println!("{}", "The provided program can't be executed!".red());
+			println!("{}", error);
+			return;
+		}
+		CompilationResult::CompilationError(error) => {
+			println!("{}", "Program compilation failed with the following errors:".red());
+			println!("{}", error);
+			return;
+		}
+	};
+
+	let checker_executable = if let ActionType::Checker { path } = &config.action_type {
+		match compiler.prepare_executable(path) {
+			CompilationResult::Success(compiled_executable, compilation_time) => {
+				if let Some(compilation_time) = compilation_time {
+					println!("{}", format!("Checker compilation completed in {:.2}s", compilation_time.as_secs_f32()).green());
+				}
+				Some(compiled_executable)
+			}
+			CompilationResult::InvalidExecutable(error) => {
+				println!("{}", "The provided checker can't be executed!".red());
+				println!("{}", error);
+				return;
+			}
+			CompilationResult::CompilationError(error) => {
+				println!("{}", "Checker compilation failed with the following errors:".red());
 				println!("{}", error);
 				return;
 			}
 		}
-	}
-	else {
-		let executable = tempdir.path().join(format!("{}.o", config.source_path.file_name().expect("The provided filename is invalid!").to_str().expect("The provided filename is invalid!")));
-		fs::copy(&config.source_path, &executable).expect("The provided filename is invalid!");
-
-		let Ok(mut child) = Command::new(&executable).spawn() else {
-			println!("{}", "The provided file can't be executed!".red());
-			return;
-		};
-		child.kill().unwrap_or(());
-		executable
-	};
-
-	// Checker compiling
-	let checker_executable: Option<PathBuf> = if let ActionType::Checker { path } = &config.action_type {
-		let checker_extension = path.extension().unwrap_or(OsStr::new("")).to_str().expect("Couldn't get the extension of the provided file");
-
-		if !is_executable(&path) || (checker_extension == "cpp" || checker_extension == "cc" || checker_extension == "cxx" || checker_extension == "c") {
-			match compile_cpp(&path, &tempdir, config.compile_timeout, &config.compile_command) {
-				Ok((compiled_executable, compilation_time)) => {
-					println!("{}", format!("Checker compilation completed in {:.2}s", compilation_time).green());
-					Some(compiled_executable)
-				}
-				Err(error) => {
-					println!("{}", "Checker compilation failed with the following errors:".red());
-					println!("{}", error);
-					return;
-				}
-			}
-		}
-		else {
-			let checker_executable = tempdir.path().join(format!("{}.o", path.file_name().expect("The provided checker is invalid!").to_str().expect("The provided checker is invalid!")));
-			fs::copy(&path, &checker_executable).expect("The provided filename is invalid!");
-
-			let Ok(mut child) = Command::new(&checker_executable).spawn() else {
-				println!("{}", "The provided checker can't be executed!".red());
-				return;
-			};
-			child.kill().unwrap_or(());
-
-			Some(checker_executable)
-		}
-	} else {
-		None
-	};
+	} else { None };
 
 	let runner: Box<dyn TestExecutor> = match config.execute_mode {
 		Simple => Box::new(SimpleExecutor {
