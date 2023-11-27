@@ -14,7 +14,7 @@ use std::{fs, panic};
 use std::fmt::Write as FmtWrite;
 use std::panic::PanicInfo;
 use std::path::PathBuf;
-use std::process::exit;
+use std::process::{exit, ExitCode};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Acquire, Release};
@@ -113,37 +113,31 @@ fn check_ctrlc() -> Option<()> {
 	else { Some(()) }
 }
 
-fn init_runner(executable: PathBuf, config: &ParsedConfig) -> Box<dyn TestExecutor> {
-	match config.execute_mode {
+fn init_runner(executable: PathBuf, config: &ParsedConfig) -> Result<Box<dyn TestExecutor>, FormattedError> {
+	Ok(match config.execute_mode {
 		Simple => Box::new(SimpleExecutor {
 			executable_path: executable,
 			timeout: config.execute_timeout,
 		}),
 		#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 		Sio2jail { memory_limit } => {
-			let runner = Sio2jailExecutor::init_and_test(
+			Box::new(Sio2jailExecutor::init_and_test(
 				config.execute_timeout,
 				executable,
 				memory_limit,
-			);
-			match runner {
-				Ok(runner) => Box::new(runner),
-				Err(error) => {
-					println!("{}", error.red());
-					exit(1);
-				}
-			}
+			).map_err(|error| FormattedError::from_str(&error))?)
 		},
-	}
+	})
 }
 
-fn main() {
+fn main() -> ExitCode {
 	setup_panic();
 
 	if let Err(error) = try_main() {
 		println!("{}", error);
-		exit(1);
+		return ExitCode::FAILURE;
 	}
+	ExitCode::SUCCESS
 }
 
 fn try_main() -> Result<(), FormattedError> {
@@ -192,8 +186,7 @@ fn try_main() -> Result<(), FormattedError> {
 		Some(executable)
 	} else { None };
 
-	let runner = init_runner(executable, &config);
-
+	let runner = init_runner(executable, &config)?;
 	let checker = checker_executable.map(|checker_executable| {
 		Checker::new(checker_executable, config.execute_timeout)
 	});
