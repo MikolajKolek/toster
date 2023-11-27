@@ -3,7 +3,7 @@ use std::io::ErrorKind::NotFound;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
-use color_print::cformat;
+use colored::Colorize;
 use is_executable::is_executable;
 use tempfile::TempDir;
 use wait_timeout::ChildExt;
@@ -18,19 +18,19 @@ pub(crate) enum CompilerError {
 
 impl CompilerError {
     pub fn to_formatted(&self, is_checker: bool) -> FormattedError {
-        let type_string = if is_checker { "checker" } else { "program" };
+        let program_type = if is_checker { "checker" } else { "program" };
         FormattedError::preformatted(match self {
             InvalidExecutable(error) => {
-                cformat!(
-                    "<red>The provided {} can't be executed!</red>\n{}",
-                    type_string,
+                format!(
+                    "{}\n{}",
+                    format!("The provided {} can't be executed!", program_type).red(),
                     error
                 )
             },
             CompilationError(error) => {
-                cformat!(
-                    "<red>{} compilation failed with the following errors:</red>\n{}",
-                    type_string.to_uppercase(),
+                format!(
+                    "{}\n{}",
+                    format!("{} compilation failed with the following errors:", program_type.to_uppercase()).red(),
                     error
                 )
             }

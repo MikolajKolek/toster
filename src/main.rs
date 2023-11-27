@@ -19,7 +19,6 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Acquire, Release};
 use clap::Parser;
-use color_print::cprintln;
 use colored::Colorize;
 use human_panic::{handle_dump, print_msg};
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressState, ProgressStyle};
@@ -178,7 +177,7 @@ fn try_main() -> Result<(), FormattedError> {
 			.prepare_executable(&config.source_path, "program")
 			.map_err(|error| error.to_formatted(false))?;
 		if let Some(compilation_time) = compilation_time {
-			cprintln!("<green>Program compilation completed in <white>{:.2}</white>s</green>", compilation_time.as_secs_f32());
+			println!("{}", format!("Program compilation completed in {:.2}", compilation_time.as_secs_f32()).green());
 		}
 		executable
 	};
@@ -188,7 +187,7 @@ fn try_main() -> Result<(), FormattedError> {
 			.prepare_executable(path, "checker")
 			.map_err(|error| error.to_formatted(true))?;
 		if let Some(compilation_time) = compilation_time {
-			cprintln!("<green>Checker compilation completed in <white>{:.2}</white>s</green>", compilation_time.as_secs_f32());
+			println!("{}", format!("Checker compilation completed in {:.2}", compilation_time.as_secs_f32()).green());
 		}
 		Some(executable)
 	} else { None };
