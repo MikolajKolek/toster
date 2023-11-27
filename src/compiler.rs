@@ -3,16 +3,39 @@ use std::io::ErrorKind::NotFound;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
+use color_print::cformat;
 use is_executable::is_executable;
 use tempfile::TempDir;
 use wait_timeout::ChildExt;
-use crate::compiler::CompilationResult::*;
+use crate::compiler::CompilerError::{CompilationError, InvalidExecutable};
+use crate::formatted_error::FormattedError;
 use crate::pipes::BufferedPipe;
 
-pub(crate) enum CompilationResult {
-    Success(PathBuf, Option<Duration>),
+pub(crate) enum CompilerError {
     InvalidExecutable(io::Error),
     CompilationError(String),
+}
+
+impl CompilerError {
+    pub fn to_formatted(&self, is_checker: bool) -> FormattedError {
+        let type_string = if is_checker { "checker" } else { "program" };
+        FormattedError::preformatted(match self {
+            InvalidExecutable(error) => {
+                cformat!(
+                    "<red>The provided {} can't be executed!</red>\n{}",
+                    type_string,
+                    error
+                )
+            },
+            CompilationError(error) => {
+                cformat!(
+                    "<red>{} compilation failed with the following errors:</red>\n{}",
+                    type_string.to_uppercase(),
+                    error
+                )
+            }
+        })
+    }
 }
 
 pub(crate) struct Compiler<'a> {
@@ -71,21 +94,25 @@ impl<'a> Compiler<'a> {
             })
     }
 
-    pub(crate) fn prepare_executable(&self, source_path: &Path, name: &'static str) -> CompilationResult {
+    pub(crate) fn prepare_executable(
+        &self,
+        source_path: &Path,
+        name: &'static str,
+    ) -> Result<(PathBuf, Option<Duration>), CompilerError> {
         debug_assert!(PathBuf::from(name).extension() == None);
         let output_path = self.tempdir.path().join(format!("{}.o", name));
 
         if !Self::is_source_file(source_path) {
             fs::copy(source_path, &output_path).expect("The provided filename is invalid");
             if let Err(error) = Self::try_spawning_executable(&output_path) {
-                return InvalidExecutable(error);
+                return Err(InvalidExecutable(error));
             }
-            return Success(output_path, None);
+            return Ok((output_path, None));
         }
 
         match self.compile_cpp(source_path, &output_path) {
-            Ok(compilation_time) => Success(output_path, Some(compilation_time)),
-            Err(error) => CompilationError(error),
+            Ok(compilation_time) => Ok((output_path, Some(compilation_time))),
+            Err(error) => Err(CompilationError(error)),
         }
     }
 }

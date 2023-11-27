@@ -8,15 +8,18 @@ mod test_summary;
 mod pipes;
 mod checker;
 mod compiler;
+mod formatted_error;
 
 use std::{fs, panic};
 use std::fmt::Write as FmtWrite;
 use std::panic::PanicInfo;
+use std::path::PathBuf;
 use std::process::exit;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Acquire, Release};
 use clap::Parser;
+use color_print::cprintln;
 use colored::Colorize;
 use human_panic::{handle_dump, print_msg};
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressState, ProgressStyle};
@@ -26,7 +29,7 @@ use args::Args;
 use crate::args::{ActionType, InputConfig, ParsedConfig};
 use crate::args::ExecuteMode::*;
 use crate::checker::Checker;
-use crate::compiler::{CompilationResult, Compiler};
+use crate::compiler::Compiler;
 use crate::executor::simple::SimpleExecutor;
 use crate::prepare_input::prepare_file_inputs;
 use crate::executor::TestExecutor;
@@ -35,6 +38,7 @@ use crate::test_summary::TestSummary;
 use crate::testing_utils::compare_output;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use crate::executor::sio2jail::Sio2jailExecutor;
+use crate::formatted_error::FormattedError;
 use crate::generic_utils::halt;
 
 static RECEIVED_CTRL_C: AtomicBool = AtomicBool::new(false);
@@ -110,17 +114,42 @@ fn check_ctrlc() -> Option<()> {
 	else { Some(()) }
 }
 
+fn init_runner(executable: PathBuf, config: &ParsedConfig) -> Box<dyn TestExecutor> {
+	match config.execute_mode {
+		Simple => Box::new(SimpleExecutor {
+			executable_path: executable,
+			timeout: config.execute_timeout,
+		}),
+		#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+		Sio2jail { memory_limit } => {
+			let runner = Sio2jailExecutor::init_and_test(
+				config.execute_timeout,
+				executable,
+				memory_limit,
+			);
+			match runner {
+				Ok(runner) => Box::new(runner),
+				Err(error) => {
+					println!("{}", error.red());
+					exit(1);
+				}
+			}
+		},
+	}
+}
+
 fn main() {
 	setup_panic();
 
-    let config = match ParsedConfig::try_from(Args::parse()) {
-		Ok(config) => config,
-		Err(error) => {
-			println!("{}", error.red());
-			exit(1);
-		},
-	};
+	if let Err(error) = try_main() {
+		println!("{}", error);
+		exit(1);
+	}
+}
 
+fn try_main() -> Result<(), FormattedError> {
+    let config = ParsedConfig::try_from(Args::parse())
+		.map_err(|error| FormattedError::from_str(&error))?;
 	let test_summary: Arc<Mutex<Option<TestSummary>>> = Arc::new(Mutex::new(None));
 	{
 		let test_summary = test_summary.clone();
@@ -144,67 +173,27 @@ fn main() {
 		compile_command: &config.compile_command,
 	};
 
-	let executable = match compiler.prepare_executable(&config.source_path, "program") {
-		CompilationResult::Success(compiled_executable, compilation_time) => {
-			if let Some(compilation_time) = compilation_time {
-				println!("{}", format!("Program compilation completed in {:.2}s", compilation_time.as_secs_f32()).green());
-			}
-			compiled_executable
+	let executable = {
+		let (executable, compilation_time) = compiler
+			.prepare_executable(&config.source_path, "program")
+			.map_err(|error| error.to_formatted(false))?;
+		if let Some(compilation_time) = compilation_time {
+			cprintln!("<green>Program compilation completed in <white>{:.2}</white>s</green>", compilation_time.as_secs_f32());
 		}
-		CompilationResult::InvalidExecutable(error) => {
-			println!("{}", "The provided program can't be executed!".red());
-			println!("{}", error);
-			return;
-		}
-		CompilationResult::CompilationError(error) => {
-			println!("{}", "Program compilation failed with the following errors:".red());
-			println!("{}", error);
-			return;
-		}
+		executable
 	};
 
 	let checker_executable = if let ActionType::Checker { path } = &config.action_type {
-		match compiler.prepare_executable(path, "checker") {
-			CompilationResult::Success(compiled_executable, compilation_time) => {
-				if let Some(compilation_time) = compilation_time {
-					println!("{}", format!("Checker compilation completed in {:.2}s", compilation_time.as_secs_f32()).green());
-				}
-				Some(compiled_executable)
-			}
-			CompilationResult::InvalidExecutable(error) => {
-				println!("{}", "The provided checker can't be executed!".red());
-				println!("{}", error);
-				return;
-			}
-			CompilationResult::CompilationError(error) => {
-				println!("{}", "Checker compilation failed with the following errors:".red());
-				println!("{}", error);
-				return;
-			}
+		let (executable, compilation_time) = compiler
+			.prepare_executable(path, "checker")
+			.map_err(|error| error.to_formatted(true))?;
+		if let Some(compilation_time) = compilation_time {
+			cprintln!("<green>Checker compilation completed in <white>{:.2}</white>s</green>", compilation_time.as_secs_f32());
 		}
+		Some(executable)
 	} else { None };
 
-	let runner: Box<dyn TestExecutor> = match config.execute_mode {
-		Simple => Box::new(SimpleExecutor {
-			executable_path: executable,
-			timeout: config.execute_timeout,
-		}),
-		#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-		Sio2jail { memory_limit } => {
-			let runner = Sio2jailExecutor::init_and_test(
-				config.execute_timeout,
-				executable,
-				memory_limit,
-			);
-			match runner {
-				Ok(runner) => Box::new(runner),
-				Err(error) => {
-					println!("{}", error.red());
-					exit(1);
-				}
-			}
-		},
-	};
+	let runner = init_runner(executable, &config);
 
 	let checker = checker_executable.map(|checker_executable| {
 		Checker::new(checker_executable, config.execute_timeout)
@@ -280,4 +269,5 @@ fn main() {
 	});
 
 	print_output(false, &mut test_summary.lock().expect("Failed to lock test summary mutex"));
+	Ok(())
 }
