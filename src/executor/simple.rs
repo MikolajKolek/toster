@@ -26,7 +26,7 @@ impl SimpleExecutor {
             },
             None => {
                 #[cfg(all(unix))]
-                if status.signal().expect("The program returned an invalid status code!") == 2 {
+                if status.signal().expect("The program returned an invalid status code") == 2 {
                     // TODO: Implement better
                     halt();
                 }

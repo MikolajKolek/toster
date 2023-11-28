@@ -43,20 +43,20 @@ impl Sio2jailExecutor {
     }
 
     fn run_sio2jail(&self, input_stdio: Stdio, executable_path: &Path) -> Result<Sio2jailOutput, ExecutionError> {
-        let sio2jail_output = BufferedPipe::create().expect("Failed to create sio2jail output pipe!");
-        let mut stdout = BufferedPipe::create().expect("Failed to create stdout pipe!");
-        let mut stderr = BufferedPipe::create().expect("Failed to create stderr pipe!");
+        let sio2jail_output = BufferedPipe::create().expect("Failed to create sio2jail output pipe");
+        let mut stdout = BufferedPipe::create().expect("Failed to create stdout pipe");
+        let mut stderr = BufferedPipe::create().expect("Failed to create stderr pipe");
 
         let mut child = Command::new(&self.sio2jail_path)
             .args(["-f", "3", "-o", "oiaug", "--mount-namespace", "off", "--pid-namespace", "off", "--uts-namespace", "off", "--ipc-namespace", "off", "--net-namespace", "off", "--capability-drop", "off", "--user-namespace", "off", "-s", "-m", &self.memory_limit.to_string(), "--", executable_path.to_str().unwrap() ])
             .fd_mappings(vec![FdMapping {
                 parent_fd: sio2jail_output.get_raw_fd(),
                 child_fd: 3
-            }]).expect("Failed to redirect file descriptor 3!")
+            }]).expect("Failed to redirect file descriptor 3")
             .stdout(stdout.get_stdio())
             .stderr(stderr.get_stdio())
             .stdin(input_stdio)
-            .spawn().expect("Failed to executor file!");
+            .spawn().expect("Failed to executor file");
 
         let status = child.wait_timeout(self.timeout).unwrap();
         let Some(status) = status else {
@@ -144,7 +144,7 @@ impl TestExecutor for Sio2jailExecutor {
         match output.status.code() {
             None => {
                 #[cfg(all(unix))]
-                if cfg!(unix) && output.status.signal().expect("Sio2jail returned an invalid status code!") == 2 {
+                if cfg!(unix) && output.status.signal().expect("Sio2jail returned an invalid status code") == 2 {
                     halt();
                 }
 

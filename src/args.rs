@@ -159,7 +159,7 @@ impl TryFrom<Args> for ParsedConfig {
 
 			action_type: match (args.generate, args.checker) {
 				(true, Some(_)) => {
-					return Err("You can't have the --generate and --checker flags on at the same time.".to_string())
+					return Err("You can't have the --generate and --checker flags on at the same time".to_string())
 				},
 				(true, None) => {
 					if output_directory.exists() && !output_directory.is_dir() {

@@ -11,7 +11,7 @@ pub(crate) fn compare_output(expected_output_path: &Path, actual_output: &str) -
 	if !expected_output_path.is_file() {
 		return Err(NoOutputFile);
 	}
-	let expected_output = fs::read_to_string(expected_output_path).expect("Failed to read output file!");
+	let expected_output = fs::read_to_string(expected_output_path).expect("Failed to read output file");
 
 	let expected_output = split_trim_end(&expected_output);
 	let actual_output = split_trim_end(&actual_output);

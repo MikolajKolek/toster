@@ -54,13 +54,13 @@ impl<'a> Compiler<'a> {
 
     fn compile_cpp(&self, source_path: &Path, executable_path: &Path) -> Result<Duration, String> {
         let cmd = self.compile_command
-            .replace("<IN>", source_path.to_str().expect("The provided filename is invalid!"))
+            .replace("<IN>", source_path.to_str().expect("The provided filename is invalid"))
             .replace("<OUT>", &executable_path.to_str().expect("The provided filename is invalid"));
         let mut split_cmd = cmd.split(" ");
 
         let mut stderr = BufferedPipe::create().expect("Failed to create stderr pipe");
         let time_before_compilation = Instant::now();
-        let child = Command::new(&split_cmd.next().expect("The compile command is invalid!"))
+        let child = Command::new(&split_cmd.next().expect("The compile command is invalid"))
             .args(split_cmd)
             .stderr(stderr.get_stdio())
             .spawn();

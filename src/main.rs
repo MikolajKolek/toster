@@ -152,7 +152,7 @@ fn try_main() -> Result<(), FormattedError> {
 		}).expect("Error setting Ctrl-C handler");
 	}
 
-	let tempdir = tempdir().expect("Failed to create temporary directory!");
+	let tempdir = tempdir().expect("Failed to create temporary directory");
 
 	if let ActionType::Generate { output_directory, .. } = &config.action_type {
 		if !output_directory.is_dir() {
@@ -195,11 +195,11 @@ fn try_main() -> Result<(), FormattedError> {
     let style: ProgressStyle = {
         let test_summary = test_summary.clone();
         ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{counts} {ctrlc}")
-            .expect("Progress bar creation failed!")
+            .expect("Progress bar creation failed")
             .with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed!"))
             .progress_chars("#>-")
             .with_key("counts", move |_state: &ProgressState, w: &mut dyn FmtWrite| {
-                write!(w, "{}", test_summary.lock().expect("Failed to lock test summary mutex").as_ref().unwrap().format_counts(false)).expect("Displaying the progress bar failed!")
+                write!(w, "{}", test_summary.lock().expect("Failed to lock test summary mutex").as_ref().unwrap().format_counts(false)).expect("Displaying the progress bar failed")
             })
             .with_key("ctrlc", |_state: &ProgressState, w: &mut dyn FmtWrite|
                 write!(w, "{}", "(Press Ctrl+C to stop testing and print current results)".bright_black()).expect("Displaying the progress bar Ctrl+C message failed!")
