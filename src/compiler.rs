@@ -18,19 +18,24 @@ pub(crate) enum CompilerError {
 
 impl CompilerError {
     pub fn to_formatted(&self, is_checker: bool) -> FormattedError {
-        let program_type = if is_checker { "checker" } else { "program" };
         FormattedError::preformatted(match self {
             InvalidExecutable(error) => {
                 format!(
                     "{}\n{}",
-                    format!("The provided {} can't be executed!", program_type).red(),
+                    format!(
+                        "The provided {} can't be executed!",
+                        if is_checker { "checker" } else { "program" }
+                    ).red(),
                     error
                 )
             },
             CompilationError(error) => {
                 format!(
                     "{}\n{}",
-                    format!("{} compilation failed with the following errors:", program_type.to_uppercase()).red(),
+                    format!(
+                        "{} compilation failed with the following errors:",
+                        if is_checker { "Checker" } else { "Program" }
+                    ).red(),
                     error
                 )
             }

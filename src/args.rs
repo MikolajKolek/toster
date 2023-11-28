@@ -163,7 +163,7 @@ impl TryFrom<Args> for ParsedConfig {
 				},
 				(true, None) => {
 					if output_directory.exists() && !output_directory.is_dir() {
-						return Err("Output path is not a directory".to_string())
+						return Err("The output path is not a directory".to_string())
 					}
 					ActionType::Generate {
 						output_directory,
