@@ -23,7 +23,7 @@ impl CompilerError {
                 format!(
                     "{}\n{}",
                     format!(
-                        "The provided {} can't be executed!",
+                        "The provided {} can't be executed",
                         if is_checker { "checker" } else { "program" }
                     ).red(),
                     error
@@ -72,7 +72,7 @@ impl<'a> Compiler<'a> {
 
         let mut child = match child {
             Ok(child) => child,
-            Err(error) if error.kind() == NotFound => { return Err("The compiler was not found!".to_string()) }
+            Err(error) if error.kind() == NotFound => { return Err("The compiler was not found".to_string()) }
             Err(error) => { return Err(error.to_string()) }
         };
 
