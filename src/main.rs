@@ -53,7 +53,7 @@ fn print_output(stopped_early: bool, test_summary: &mut Option<TestSummary>) {
 	}
 
 	let additional_info = match (&test_summary.slowest_test, &test_summary.most_memory_used) {
-		(None, None) => "",
+		(None, None) => "".to_string(),
 		(Some((duration, slowest_test_name)), None) => format!(
 			" (Slowest test: {} at {:.3}s)",
 			slowest_test_name, duration.as_secs_f32(),
@@ -129,7 +129,7 @@ fn init_runner(executable: PathBuf, config: &ParsedConfig) -> Result<Box<dyn Tes
 				config.execute_timeout,
 				executable,
 				memory_limit,
-			).map_err(|error| FormattedError::from_str(&error))?)
+			)?)
 		},
 	})
 }

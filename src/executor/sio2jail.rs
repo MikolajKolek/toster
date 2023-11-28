@@ -2,12 +2,14 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::time::Duration;
+use colored::Colorize;
 use command_fds::{CommandFdExt, FdMapping};
 use directories::BaseDirs;
 use wait_timeout::ChildExt;
 use which::which;
 use crate::pipes::BufferedPipe;
 use crate::executor::TestExecutor;
+use crate::formatted_error::FormattedError;
 use crate::generic_utils::halt;
 use crate::test_errors::{ExecutionError, ExecutionMetrics};
 use crate::test_errors::ExecutionError::{MemoryLimitExceeded, RuntimeError, Sio2jailError, TimedOut};
@@ -27,17 +29,23 @@ struct Sio2jailOutput {
 }
 
 impl Sio2jailExecutor {
-    fn get_sio2jail_path() -> Result<PathBuf, String> {
+    fn get_sio2jail_path() -> Result<PathBuf, FormattedError> {
         let Some(binding) = BaseDirs::new() else {
-            return Err("No valid home directory path could be retrieved from the operating system. Sio2jail could not be found".to_string());
+            return Err(FormattedError::from_str(
+                "No valid home directory path could be retrieved from the operating system. Sio2jail could not be found"
+            ));
         };
         let Some(executable_dir) = binding.executable_dir() else {
-            return Err("Couldn't locate the user's executable directory. Sio2jail could not be found".to_string());
+            return Err(FormattedError::from_str(
+                "Couldn't locate the user's executable directory. Sio2jail could not be found"
+            ));
         };
 
         let result = executable_dir.join("sio2jail");
         if !result.exists() {
-            return Err(format!("Sio2jail could not be found at {}", result.display()));
+            return Err(FormattedError::from_str(
+                &format!("Sio2jail could not be found at {}", result.display())
+            ));
         }
         Ok(result)
     }
@@ -72,30 +80,34 @@ impl Sio2jailExecutor {
         })
     }
 
-    fn test(&self) -> Result<(), String> {
+    fn test(&self) -> Result<(), FormattedError> {
         let Ok(true_command_location) = which("true") else {
-            return Err("The executable for the \"true\" command could not be found".to_string());
+            return Err(FormattedError::from_str("The executable for the \"true\" command could not be found"));
         };
 
         let output = self.run_sio2jail(Stdio::null(), &true_command_location);
         let output = match output {
             Ok(output) => output,
             Err(error) => {
-                return Err(format!("Sio2jail error: {}", error.to_string()));
+                return Err(FormattedError::from_str(&format!("Sio2jail error: {}", error.to_string())));
             }
         };
         if output.stderr == "Exception occurred: System error occured: perf event open failed: Permission denied: error 13: Permission denied\n" {
-            return Err(
-                "You need to run the following command to use toster with sio2jail.\
-                You may also put this option in your /etc/sysctl.conf.\
-                This will make the setting persist across reboots.\
-                sudo sysctl -w kernel.perf_event_paranoid=-1".to_string()
-            );
+            return Err(FormattedError::preformatted(format!(
+                "{}\n{}",
+                "You need to run the following command to use toster with sio2jail.\n\
+                You may also put this option in your /etc/sysctl.conf.\n\
+                This will make the setting persist across reboots.".red(),
+                "sudo sysctl -w kernel.perf_event_paranoid=-1".white()
+            )));
+        }
+        if !output.stderr.is_empty() {
+            return Err(FormattedError::from_str(&format!("Sio2jail error: {}", output.stderr)));
         }
         Ok(())
     }
 
-    pub(crate) fn init_and_test(timeout: Duration, executable_path: PathBuf, memory_limit: u64) -> Result<Sio2jailExecutor, String> {
+    pub(crate) fn init_and_test(timeout: Duration, executable_path: PathBuf, memory_limit: u64) -> Result<Sio2jailExecutor, FormattedError> {
         let executor = Sio2jailExecutor {
             timeout,
             memory_limit,
