@@ -42,12 +42,12 @@ impl SimpleExecutor {
 
         match status {
             Some(status) => (
-                ExecutionMetrics { time: Some(start_time.elapsed()), memory_kilobytes: None },
+                ExecutionMetrics { time: Some(start_time.elapsed()), memory_kibibytes: None },
                 SimpleExecutor::map_status_code(&status)
             ),
             None => {
                 child.kill().unwrap();
-                (ExecutionMetrics { time: Some(self.timeout), memory_kilobytes: None }, Err(TimedOut))
+                (ExecutionMetrics { time: Some(self.timeout), memory_kibibytes: None }, Err(TimedOut))
             }
         }
     }

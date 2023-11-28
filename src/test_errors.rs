@@ -2,13 +2,13 @@ use std::time::Duration;
 use colored::Colorize;
 
 pub struct ExecutionMetrics {
-	pub(crate) memory_kilobytes: Option<u64>,
+	pub(crate) memory_kibibytes: Option<u64>,
 	pub(crate) time: Option<Duration>,
 }
 
 impl ExecutionMetrics {
 	#[allow(dead_code)]
-	pub const NONE: ExecutionMetrics = ExecutionMetrics { memory_kilobytes: None, time: None };
+	pub const NONE: ExecutionMetrics = ExecutionMetrics { memory_kibibytes: None, time: None };
 }
 
 pub enum TestError {

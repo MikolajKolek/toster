@@ -111,7 +111,7 @@ impl TestExecutor for Sio2jailExecutor {
     fn test_to_string(&self, input_stdio: Stdio) -> (ExecutionMetrics, Result<String, ExecutionError>) {
         let output = match self.run_sio2jail(input_stdio, &self.executable_path) {
             Err(TimedOut) => {
-                return (ExecutionMetrics { time: Some(self.timeout), memory_kilobytes: None }, Err(MemoryLimitExceeded));
+                return (ExecutionMetrics { time: Some(self.timeout), memory_kibibytes: None }, Err(MemoryLimitExceeded));
             }
             Err(error) => {
                 return (ExecutionMetrics::NONE, Err(error));
@@ -121,7 +121,7 @@ impl TestExecutor for Sio2jailExecutor {
 
         if !output.stderr.is_empty() {
             return if output.stderr == "terminate called after throwing an instance of 'std::bad_alloc'\n  what():  std::bad_alloc\n" {
-                (ExecutionMetrics { time: None, memory_kilobytes: Some(self.memory_limit) }, Err(MemoryLimitExceeded))
+                (ExecutionMetrics { time: None, memory_kibibytes: Some(self.memory_limit) }, Err(MemoryLimitExceeded))
             } else {
                 (ExecutionMetrics::NONE, Err(Sio2jailError(output.stderr)))
             }
@@ -133,12 +133,12 @@ impl TestExecutor for Sio2jailExecutor {
         }
         let sio2jail_status = split[0];
         let time = Duration::from_secs_f64(split[2].parse::<f64>().expect("Sio2jail returned an invalid runtime in the output") / 1000.0);
-        let memory_kilobytes = split[4].parse::<u64>().expect("Sio2jail returned invalid memory usage in the output");
+        let memory_kibibytes = split[4].parse::<u64>().expect("Sio2jail returned invalid memory usage in the output");
         let error_message = output.sio2jail_output.lines().nth(1);
 
         let metrics = ExecutionMetrics {
             time: Some(time),
-            memory_kilobytes: Some(memory_kilobytes)
+            memory_kibibytes: Some(memory_kibibytes)
         };
 
         match output.status.code() {
@@ -156,7 +156,7 @@ impl TestExecutor for Sio2jailExecutor {
             }
         }
 
-        return (ExecutionMetrics { time: Some(time), memory_kilobytes: Some(memory_kilobytes) }, match sio2jail_status {
+        return (ExecutionMetrics { time: Some(time), memory_kibibytes: Some(memory_kibibytes) }, match sio2jail_status {
             "OK" => Ok(output.stdout),
             "RE" | "RV" => Err(RuntimeError(error_message.and_then(|message| Some(format!("- {}", message))).unwrap_or(String::new()))),
             "TLE" => Err(TimedOut),

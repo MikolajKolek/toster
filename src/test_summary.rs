@@ -123,7 +123,7 @@ impl TestSummary {
             }
         }
 
-        if let Some(new_memory) = &metrics.memory_kilobytes {
+        if let Some(new_memory) = &metrics.memory_kibibytes {
             if self.most_memory_used.is_none_or(|(memory, _)| new_memory > memory) {
                 self.most_memory_used = Some((*new_memory, test_name.to_string()));
             }
