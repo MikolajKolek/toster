@@ -148,7 +148,7 @@ impl TestExecutor for Sio2jailExecutor {
                     halt();
                 }
 
-                return (metrics, Err(RuntimeError(format!    ("- the process was terminated with the following error:\n{}", output.status.to_string()))))
+                return (metrics, Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", output.status.to_string()))))
             }
             Some(0) => {}
             Some(exit_code) => {

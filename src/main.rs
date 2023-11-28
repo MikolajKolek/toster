@@ -52,18 +52,22 @@ fn print_output(stopped_early: bool, test_summary: &mut Option<TestSummary>) {
 		println!();
 	}
 
-	let mut additional_info = String::new();
-	if let Some(slowest_test) = &test_summary.slowest_test {
-		additional_info = format!(
+	let additional_info = match (&test_summary.slowest_test, &test_summary.most_memory_used) {
+		(None, None) => "",
+		(Some((duration, slowest_test_name)), None) => format!(
 			" (Slowest test: {} at {:.3}s)",
-			slowest_test.1,
-		  	slowest_test.0.as_secs_f32(),
-		)
-	}
-	if let Some(most_memory) = &test_summary.most_memory_used {
-		if !additional_info.is_empty() { additional_info += ", " }
-		additional_info += &format!("most memory used: {} at {}KiB", most_memory.1, most_memory.0);
-	}
+			slowest_test_name, duration.as_secs_f32(),
+		),
+		(None, Some((memory, most_memory_test_name))) => format!(
+			" (Most memory used: {} at {:.3}KiB)",
+			most_memory_test_name, memory,
+		),
+		(Some((duration, slowest_test_name)), Some((memory, most_memory_test_name))) => format!(
+			" (Slowest test: {} at {:.3}s, most memory used: {} at {}KiB)",
+			slowest_test_name, duration.as_secs_f32(),
+			most_memory_test_name, memory,
+		),
+	};
 
 	println!(
 		"{} {} {:.2}s{}\nResults: {}",
@@ -74,7 +78,7 @@ fn print_output(stopped_early: bool, test_summary: &mut Option<TestSummary>) {
         test_summary.format_counts(true),
 	);
 
-	let incorrect_results=  test_summary.get_errors();
+	let incorrect_results = test_summary.get_errors();
 	if !incorrect_results.is_empty() {
 		println!("Errors were found in the following tests:");
 

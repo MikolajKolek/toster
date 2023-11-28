@@ -7,6 +7,8 @@ pub struct ExecutionMetrics {
 }
 
 impl ExecutionMetrics {
+	// Currently only the sio2jail executor uses this constant,
+	// which is not compiled on Windows builds
 	#[allow(dead_code)]
 	pub const NONE: ExecutionMetrics = ExecutionMetrics { memory_kibibytes: None, time: None };
 }
