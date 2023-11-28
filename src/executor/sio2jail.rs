@@ -111,7 +111,7 @@ impl TestExecutor for Sio2jailExecutor {
     fn test_to_string(&self, input_stdio: Stdio) -> (ExecutionMetrics, Result<String, ExecutionError>) {
         let output = match self.run_sio2jail(input_stdio, &self.executable_path) {
             Err(TimedOut) => {
-                return (ExecutionMetrics { time: Some(self.timeout), memory_kibibytes: None }, Err(MemoryLimitExceeded));
+                return (ExecutionMetrics { time: Some(self.timeout), memory_kibibytes: None }, Err(TimedOut));
             }
             Err(error) => {
                 return (ExecutionMetrics::NONE, Err(error));
