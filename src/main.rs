@@ -208,7 +208,7 @@ fn try_main() -> Result<(), FormattedError> {
 
 	let inputs = match &config.input {
 		InputConfig::Directory { directory, ext } => {
-			prepare_file_inputs(directory, ext)
+			prepare_file_inputs(directory, ext)?
 		},
 	};
 	*test_summary.lock().expect("Failed to lock test summary mutex") = Some(TestSummary::new(config.generate_mode(), inputs.test_count));

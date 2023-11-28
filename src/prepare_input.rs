@@ -2,9 +2,9 @@ use std::fs::{File, read_dir};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use colored::Colorize;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator};
 use rayon::vec::IntoIter;
+use crate::formatted_error::FormattedError;
 
 pub(crate) enum TestInputSource {
     File(PathBuf)
@@ -34,7 +34,7 @@ pub(crate) struct TestingInputs<T: IndexedParallelIterator<Item = Test>> {
     pub(crate) iterator: T,
 }
 
-pub(crate) fn prepare_file_inputs(input_dir: &Path, in_ext: &str) -> TestingInputs<IntoIter<Test>> {
+pub(crate) fn prepare_file_inputs(input_dir: &Path, in_ext: &str) -> Result<TestingInputs<IntoIter<Test>>, FormattedError> {
     let tests: Vec<Test> = read_dir(&input_dir)
         .expect("Cannot open input directory!")
         .map(|input| {
@@ -56,11 +56,10 @@ pub(crate) fn prepare_file_inputs(input_dir: &Path, in_ext: &str) -> TestingInpu
         .collect();
 
     if tests.is_empty() {
-        println!("{}", "There are no files in the input directory with the provided file extension".red());
-        todo!("Implement error handling for reading inputs");
+        return Err(FormattedError::from_str("There are no files in the input directory with the provided file extension"));
     }
 
     let test_count = tests.len();
 
-    TestingInputs { test_count, iterator: tests.into_par_iter() }
+    Ok(TestingInputs { test_count, iterator: tests.into_par_iter() })
 }
