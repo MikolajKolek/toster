@@ -29,7 +29,7 @@ impl Checker {
         match output.chars().nth(0) {
             None => Err(CheckerError { error: IncorrectCheckerFormat("the checker returned an empty file".to_string()) }),
             Some('C') => Ok(()),
-            Some('N') => {
+            Some('I') => {
                 let checker_error = if output.len() > 1 { output.split_at(2).1.to_string() } else { String::new() };
                 let error_message = format!("Incorrect output{}{}", if checker_error.trim().is_empty() { "" } else { ": " }, checker_error.trim()).red();
                 Err(TestError::Incorrect {
