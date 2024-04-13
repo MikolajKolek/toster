@@ -1,15 +1,17 @@
 use std::{fs, io};
 use std::io::ErrorKind::NotFound;
+use std::io::{read_to_string, Seek};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 use colored::Colorize;
 use is_executable::is_executable;
+use memfile::MemFile;
 use tempfile::TempDir;
 use wait_timeout::ChildExt;
 use crate::compiler::CompilerError::{CompilationError, InvalidExecutable};
 use crate::formatted_error::FormattedError;
-use crate::pipes::BufferedPipe;
+use crate::temp_files::make_cloned_stdio;
 
 pub(crate) enum CompilerError {
     InvalidExecutable(io::Error),
@@ -63,11 +65,11 @@ impl<'a> Compiler<'a> {
             .replace("<OUT>", &executable_path.to_str().expect("The provided filename is invalid"));
         let mut split_cmd = cmd.split(" ");
 
-        let mut stderr = BufferedPipe::create().expect("Failed to create stderr pipe");
+        let mut stderr = MemFile::create_default("compiler stderr").expect("Failed to create memfile");
         let time_before_compilation = Instant::now();
         let child = Command::new(&split_cmd.next().expect("The compile command is invalid"))
             .args(split_cmd)
-            .stderr(stderr.get_stdio())
+            .stderr(make_cloned_stdio(&stderr))
             .spawn();
 
         let mut child = match child {
@@ -76,10 +78,12 @@ impl<'a> Compiler<'a> {
             Err(error) => { return Err(error.to_string()) }
         };
 
+        stderr.rewind().unwrap();
+
         match child.wait_timeout(self.compile_timeout).unwrap() {
             Some(status) => {
                 if status.code().expect("The compiler returned an invalid status code") != 0 {
-                    let compilation_result = stderr.join().expect("Failed to read compiler output");
+                    let compilation_result = read_to_string(stderr).expect("Failed to read compiler output");
                     return Err(compilation_result);
                 }
             }

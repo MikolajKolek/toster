@@ -496,6 +496,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f232d6ef707e1956a43342693d2a31e72989554d58299d7a88738cc95b0d35c"
 
 [[package]]
+name = "memfile"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f64636fdb65a5f0740f920c4281f3dbb76a71e25e25914b6d27000739897d40e"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "memoffset"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -560,16 +569,6 @@ dependencies = [
  "log",
  "serde",
  "winapi",
-]
-
-[[package]]
-name = "os_pipe"
-version = "1.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ae859aa07428ca9a929b936690f8b12dc5f11dd8c6992a18ca93919f28bc177"
-dependencies = [
- "libc",
- "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -860,7 +859,7 @@ dependencies = [
  "human-sort",
  "indicatif",
  "is_executable",
- "os_pipe",
+ "memfile",
  "rayon",
  "tempfile",
  "terminal_size",

@@ -1,11 +1,12 @@
-use std::io::{sink, Write};
+use std::io::{read_to_string, Seek, Write};
 use std::path::PathBuf;
-use std::{io, thread};
+use std::io;
 use std::process::Stdio;
 use std::time::Duration;
 use colored::Colorize;
+use memfile::MemFile;
 use crate::executor::simple::SimpleExecutor;
-use crate::executor::TestExecutor;
+use crate::executor::test_to_temp;
 use crate::prepare_input::TestInputSource;
 use crate::test_errors::TestError;
 use crate::test_errors::ExecutionError::IncorrectCheckerFormat;
@@ -40,28 +41,24 @@ impl Checker {
         }
     }
 
-    pub(crate) fn check(&self, input_source: &TestInputSource, output: &str) -> Result<(), TestError> {
-        let (mut reader, mut writer) = os_pipe::pipe().expect("Failed to create checker input pipe");
-        let output = thread::scope(|scope| {
-            let handle = scope.spawn(|| {
-                io::copy(&mut input_source.read(), &mut writer).unwrap();
-                writer.write("\n".as_bytes()).unwrap();
-                writer.write_all(output.as_bytes()).unwrap();
-                drop(writer);
-            });
-            let (_, output) = self.executor.test_to_string(
-                Stdio::from(reader.try_clone().unwrap())
-            );
-            io::copy(&mut reader, &mut sink()).expect("Failed to flush checker input");
-            handle.join().expect("Checker input writer panicked");
-            output
-        });
-        let output = match output {
+    pub(crate) fn prepare_checker_input(input_source: &TestInputSource) -> MemFile {
+        let mut input_memfile = MemFile::create_default("checker input memfile").expect("Failed to create memfile for checker input");
+        io::copy(&mut input_source.read(), &mut input_memfile).unwrap();
+        input_memfile.write("\n".as_bytes()).unwrap();
+        input_memfile
+    }
+
+    pub(crate) fn check(&self, mut checker_input: MemFile) -> Result<(), TestError> {
+        checker_input.rewind().unwrap();
+
+        let (_, result) = test_to_temp(&self.executor, Stdio::from(checker_input));
+        let output = match result {
             Ok(output) => output,
             Err(error) => {
                 return Err(CheckerError { error });
             }
         };
-        return Self::parse_checker_output(&output);
+        let output = read_to_string(output).expect("Failed to read checker output");
+        Self::parse_checker_output(&output)
     }
 }

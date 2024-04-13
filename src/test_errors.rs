@@ -24,6 +24,7 @@ pub enum TestError {
 		error: ExecutionError
 	},
 	NoOutputFile,
+	Cancelled,
 }
 
 #[allow(unused)]
@@ -58,6 +59,10 @@ impl TestError {
 			TestError::NoOutputFile => {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
 				result.push_str(&format!("{}", "Output file does not exist".red()));
+			}
+			TestError::Cancelled => {
+				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
+				result.push_str(&format!("{}", "Cancelled".yellow()));
 			}
 		}
 

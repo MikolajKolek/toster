@@ -101,7 +101,6 @@ impl TestSummary {
     }
 
     pub(crate) fn add_test_error(&mut self, error: TestError, test_name: String) {
-        self.processed += 1;
         match &error {
             Incorrect { .. } => { self.incorrect += 1 }
             ProgramError { error: ExecutionError::TimedOut, .. } => { self.timed_out += 1 }
@@ -113,7 +112,9 @@ impl TestSummary {
             ProgramError { error: ExecutionError::OutputNotUtf8 } => { self.invalid_output += 1 }
             CheckerError { .. } => { self.checker_error += 1 }
             NoOutputFile { .. } => { self.no_output_file += 1 }
+            Cancelled => return,
         }
+        self.processed += 1;
         self.test_errors.push((test_name, error));
     }
 

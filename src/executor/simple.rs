@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 use crate::test_errors::{ExecutionError, ExecutionMetrics};
 use wait_timeout::ChildExt;
 use crate::executor::TestExecutor;
-use crate::pipes::BufferedPipe;
 use crate::test_errors::ExecutionError::{RuntimeError, TimedOut};
 
 #[cfg(all(unix))]
@@ -53,27 +52,13 @@ impl SimpleExecutor {
 }
 
 impl TestExecutor for SimpleExecutor {
-    // pub fn test_to_file(&self, input_source: &TestInputSource, output_path: &Path) -> (ExecutionMetrics, Result<(), ExecutionError>) {
-    //     let child = Command::new(&self.executable_path)
-    //         .stdin(input_source.get_stdin())
-    //         .stdout(output_path)
-    //         .stderr(Stdio::null())
-    //         .spawn().expect("Failed to spawn child");
-    //     self.wait_for_child(child)
-    //     input_source.close();
-    // }
-
-    fn test_to_string(&self, input_stdio: Stdio) -> (ExecutionMetrics, Result<String, ExecutionError>) {
-        let mut stdout = BufferedPipe::create().expect("Failed to create stdout pipe");
-
+    fn test_to_stdio(&self, input_stdio: Stdio, output_stdio: Stdio) -> (ExecutionMetrics, Result<(), ExecutionError>) {
         let child = Command::new(&self.executable_path)
             .stdin(input_stdio)
-            .stdout(stdout.get_stdio())
+            .stdout(output_stdio)
             .stderr(Stdio::null())
             .spawn().expect("Failed to spawn child");
 
-        let (metrics, result) = self.wait_for_child(child);
-        let output = stdout.join();
-        (metrics, result.and_then(|_| output))
+        self.wait_for_child(child)
     }
 }
