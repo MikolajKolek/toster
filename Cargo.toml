@@ -25,10 +25,12 @@ is_executable = "1.0.1"
 ctrlc = "3.4.1"
 directories = "5.0.1"
 which = "5.0.0"
-memfile = "0.3.2"
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 command-fds = "0.2.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+memfile = "0.3.2"
 
 [build-dependencies]
 directories = "5.0.1"

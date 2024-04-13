@@ -10,7 +10,7 @@ use directories::BaseDirs;
 use memfile::MemFile;
 use wait_timeout::ChildExt;
 use which::which;
-use crate::temp_files::make_cloned_stdio;
+use crate::temp_files::{create_temp_file, make_cloned_stdio};
 use crate::executor::TestExecutor;
 use crate::formatted_error::FormattedError;
 use crate::generic_utils::halt;
@@ -53,8 +53,8 @@ impl Sio2jailExecutor {
     }
 
     fn run_sio2jail(&self, input_stdio: Stdio, output_stdio: Stdio, executable_path: &Path) -> Result<Sio2jailOutput, ExecutionError> {
-        let mut sio2jail_output = MemFile::create_default("sio2jail output memfile").unwrap();
-        let mut stderr = MemFile::create_default("sio2jail stderr output memfile").unwrap();
+        let mut sio2jail_output = create_temp_file().unwrap();
+        let mut stderr = create_temp_file().unwrap();
 
         let mut child = Command::new(&self.sio2jail_path)
             .args(["-f", "3", "-o", "oiaug", "--mount-namespace", "off", "--pid-namespace", "off", "--uts-namespace", "off", "--ipc-namespace", "off", "--net-namespace", "off", "--capability-drop", "off", "--user-namespace", "off", "-s", "-m", &self.memory_limit.to_string(), "--", executable_path.to_str().unwrap() ])

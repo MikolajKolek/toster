@@ -6,12 +6,11 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 use colored::Colorize;
 use is_executable::is_executable;
-use memfile::MemFile;
 use tempfile::TempDir;
 use wait_timeout::ChildExt;
 use crate::compiler::CompilerError::{CompilationError, InvalidExecutable};
 use crate::formatted_error::FormattedError;
-use crate::temp_files::make_cloned_stdio;
+use crate::temp_files::{create_temp_file, make_cloned_stdio};
 
 pub(crate) enum CompilerError {
     InvalidExecutable(io::Error),
@@ -65,7 +64,7 @@ impl<'a> Compiler<'a> {
             .replace("<OUT>", &executable_path.to_str().expect("The provided filename is invalid"));
         let mut split_cmd = cmd.split(" ");
 
-        let mut stderr = MemFile::create_default("compiler stderr").expect("Failed to create memfile");
+        let mut stderr = create_temp_file().expect("Failed to create memfile");
         let time_before_compilation = Instant::now();
         let child = Command::new(&split_cmd.next().expect("The compile command is invalid"))
             .args(split_cmd)

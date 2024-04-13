@@ -1,13 +1,14 @@
+use std::fs::File;
 use std::io::{read_to_string, Seek, Write};
 use std::path::PathBuf;
 use std::io;
 use std::process::Stdio;
 use std::time::Duration;
 use colored::Colorize;
-use memfile::MemFile;
 use crate::executor::simple::SimpleExecutor;
 use crate::executor::test_to_temp;
 use crate::prepare_input::TestInputSource;
+use crate::temp_files::create_temp_file;
 use crate::test_errors::TestError;
 use crate::test_errors::ExecutionError::IncorrectCheckerFormat;
 use crate::test_errors::TestError::CheckerError;
@@ -41,14 +42,14 @@ impl Checker {
         }
     }
 
-    pub(crate) fn prepare_checker_input(input_source: &TestInputSource) -> MemFile {
-        let mut input_memfile = MemFile::create_default("checker input memfile").expect("Failed to create memfile for checker input");
+    pub(crate) fn prepare_checker_input(input_source: &TestInputSource) -> File {
+        let mut input_memfile = create_temp_file().unwrap();
         io::copy(&mut input_source.read(), &mut input_memfile).unwrap();
         input_memfile.write("\n".as_bytes()).unwrap();
         input_memfile
     }
 
-    pub(crate) fn check(&self, mut checker_input: MemFile) -> Result<(), TestError> {
+    pub(crate) fn check(&self, mut checker_input: File) -> Result<(), TestError> {
         checker_input.rewind().unwrap();
 
         let (_, result) = test_to_temp(&self.executor, Stdio::from(checker_input));
