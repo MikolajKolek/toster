@@ -27,7 +27,7 @@ directories = "5.0.1"
 which = "5.0.0"
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
-command-fds = "0.2.3"
+command-fds = "0.3.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 memfile = "0.3.2"
