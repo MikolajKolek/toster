@@ -10,7 +10,7 @@ mod checker;
 mod compiler;
 mod formatted_error;
 
-use std::{fs, panic};
+use std::{fs, panic, thread};
 use std::fmt::Write as FmtWrite;
 use std::fs::File;
 use std::panic::PanicInfo;
@@ -191,30 +191,45 @@ fn try_main() -> Result<(), FormattedError> {
 		compile_command: &config.compile_command,
 	};
 
-	let executable = {
-		let (executable, compilation_time) = compiler
-			.prepare_executable(&config.source_path, "program")
-			.map_err(|error| error.to_formatted(false))?;
-		if let Some(compilation_time) = compilation_time {
-			println!("{}", format!("Program compilation completed in {:.2}", compilation_time.as_secs_f32()).green());
-		}
-		executable
-	};
+	let (runner, checker, inputs) = thread::scope(|scope| {
+		let runner_handle = scope.spawn(|| {
+			let (executable, compilation_time) = compiler
+				.prepare_executable(&config.source_path, "program")
+				.map_err(|error| error.to_formatted(false))?;
+			if let Some(compilation_time) = compilation_time {
+				println!("{}", format!("Program compilation completed in {:.2}", compilation_time.as_secs_f32()).green());
+			}
+			init_runner(executable, &config)
+		});
 
-	let checker_executable = if let ActionType::Checker { path } = &config.action_type {
-		let (executable, compilation_time) = compiler
-			.prepare_executable(path, "checker")
-			.map_err(|error| error.to_formatted(true))?;
-		if let Some(compilation_time) = compilation_time {
-			println!("{}", format!("Checker compilation completed in {:.2}", compilation_time.as_secs_f32()).green());
-		}
-		Some(executable)
-	} else { None };
+		let checker_handle = if let ActionType::Checker { path } = &config.action_type {
+			Some(scope.spawn(|| {
+				let (executable, compilation_time) = compiler
+					.prepare_executable(path, "checker")
+					.map_err(|error| error.to_formatted(true))?;
+				if let Some(compilation_time) = compilation_time {
+					println!("{}", format!("Checker compilation completed in {:.2}", compilation_time.as_secs_f32()).green());
+				}
+				Ok(Checker::new(executable, config.execute_timeout))
+			}))
+		} else { None };
 
-	let runner = init_runner(executable, &config)?;
-	let checker = checker_executable.map(|checker_executable| {
-		Checker::new(checker_executable, config.execute_timeout)
-	});
+		let inputs_handle = scope.spawn(|| {
+			Ok(match &config.input {
+				InputConfig::Directory { directory, ext } => {
+					prepare_file_inputs(directory, ext)?
+				},
+			})
+		});
+
+		Ok((
+			runner_handle.join().unwrap()?,
+			checker_handle.map(|handle| handle.join().unwrap()).transpose()?,
+			inputs_handle.join().unwrap()?,
+		))
+	})?;
+
+	*test_summary.lock().expect("Failed to lock test summary mutex") = Some(TestSummary::new(config.generate_mode(), inputs.test_count));
 
 	// Progress bar styling
     let style: ProgressStyle = {
@@ -230,14 +245,6 @@ fn try_main() -> Result<(), FormattedError> {
                 write!(w, "{}", "(Press Ctrl+C to stop testing and print current results)".bright_black()).expect("Displaying the progress bar Ctrl+C message failed")
             )
     };
-
-	let inputs = match &config.input {
-		InputConfig::Directory { directory, ext } => {
-			prepare_file_inputs(directory, ext)?
-		},
-	};
-	*test_summary.lock().expect("Failed to lock test summary mutex") = Some(TestSummary::new(config.generate_mode(), inputs.test_count));
-
 	let progress_bar = ProgressBar::new(inputs.test_count as u64).with_style(style);
 
 	match config.action_type {
