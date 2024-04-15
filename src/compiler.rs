@@ -76,10 +76,11 @@ impl<'a> Compiler<'a> {
             Err(error) if error.kind() == NotFound => { return Err("The compiler was not found".to_string()) }
             Err(error) => { return Err(error.to_string()) }
         };
+        let result = child.wait_timeout(self.compile_timeout).unwrap();
 
         stderr.rewind().unwrap();
 
-        match child.wait_timeout(self.compile_timeout).unwrap() {
+        match result {
             Some(status) => {
                 if status.code().expect("The compiler returned an invalid status code") != 0 {
                     let compilation_result = read_to_string(stderr).expect("Failed to read compiler output");
