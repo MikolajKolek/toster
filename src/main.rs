@@ -145,7 +145,7 @@ fn try_main() -> Result<(), FormattedError> {
 		compile_command: &config.compile_command,
 	};
 
-	let (runner, checker, inputs) = start_initial_spinner(|mut spinner| {
+	let (runner, checker, inputs) = start_initial_spinner(|spinner| {
 		let inputs_handle = spinner.add_job("preparing inputs", || {
 			match &config.input {
 				InputConfig::Directory { directory, ext } => {

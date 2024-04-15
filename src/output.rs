@@ -60,7 +60,7 @@ impl<'scope, 'data, 'env> InitialSpinner<'scope, 'data, 'env> {
 
 pub(crate) fn start_initial_spinner<'env, T, F>(callback: F) -> T
 where
-    F: for<'scope, 'data> FnOnce(InitialSpinner<'scope, 'data, 'env>) -> T,
+    F: for<'spinner, 'scope, 'data> FnOnce(&'spinner mut InitialSpinner<'scope, 'data, 'env>) -> T,
 {
     let style = ProgressStyle::with_template("[{spinner:.cyan}] {msg}\n{warming}")
         .expect("Progress bar creation failed!")
@@ -86,18 +86,18 @@ where
     bar.enable_steady_tick(Duration::from_millis(100));
 
     let data = InitialSpinnerData {
-        bar: bar.clone(),
+        bar,
         jobs: Mutex::new(vec![]),
     };
 
     thread::scope(|scope| {
-        let spinner = InitialSpinner {
+        let mut spinner = InitialSpinner {
             data: &data,
             scope,
             env: PhantomData,
         };
-        let result = callback(spinner);
-        bar.finish_and_clear();
+        let result = callback(&mut spinner);
+        spinner.data.bar.finish_and_clear();
         result
     })
 }
