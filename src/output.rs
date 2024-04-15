@@ -1,4 +1,5 @@
 use std::{fmt, thread};
+use std::marker::PhantomData;
 use std::process::exit;
 use std::sync::{Arc, Mutex};
 use std::thread::{Scope, ScopedJoinHandle};
@@ -8,15 +9,15 @@ use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use crate::formatted_error::FormattedError;
 use crate::test_summary::TestSummary;
 
-pub(crate) struct InitialSpinner<'scope, 'env: 'scope> {
-    data: InitialSpinnerData,
-    scope: &'scope Scope<'scope, 'env>,
+pub(crate) struct InitialSpinner<'scope, 'data: 'scope, 'env: 'scope + 'data> {
+    data: &'data InitialSpinnerData,
+    scope: &'scope Scope<'scope, 'data>,
+    env: PhantomData<&'env mut &'env ()>,
 }
 
-#[derive(Clone)]
 struct InitialSpinnerData {
     bar: ProgressBar,
-    jobs: Arc<Mutex<Vec<InitialSpinnerJob>>>,
+    jobs: Mutex<Vec<InitialSpinnerJob>>,
 }
 
 struct InitialSpinnerJob {
@@ -30,13 +31,13 @@ enum JobState {
     Failed,
 }
 
-impl<'scope, 'env> InitialSpinner<'scope, 'env> {
+impl<'scope, 'data, 'env> InitialSpinner<'scope, 'data, 'env> {
     pub(crate) fn add_job<T, F>(&mut self, name: &'static str, f: F) -> ScopedJoinHandle<'scope, T>
     where
         T: Send + 'scope,
         F: FnOnce() -> Result<T, FormattedError> + Send + 'scope,
     {
-        let data = self.data.clone();
+        let data = self.data;
         let job_id = data.add_job(name);
         self.scope.spawn(move || {
             let result = f();
@@ -59,7 +60,7 @@ impl<'scope, 'env> InitialSpinner<'scope, 'env> {
 
 pub(crate) fn start_initial_spinner<'env, T, F>(callback: F) -> T
 where
-    F: for<'scope> FnOnce(InitialSpinner<'scope, 'env>) -> T,
+    F: for<'scope, 'data> FnOnce(InitialSpinner<'scope, 'data, 'env>) -> T,
 {
     let style = ProgressStyle::with_template("[{spinner:.cyan}] {msg}\n{warming}")
         .expect("Progress bar creation failed!")
@@ -86,13 +87,14 @@ where
 
     let data = InitialSpinnerData {
         bar: bar.clone(),
-        jobs: Arc::new(Mutex::new(vec![])),
+        jobs: Mutex::new(vec![]),
     };
 
     thread::scope(|scope| {
         let spinner = InitialSpinner {
-            data,
+            data: &data,
             scope,
+            env: PhantomData,
         };
         let result = callback(spinner);
         bar.finish_and_clear();
