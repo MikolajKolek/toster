@@ -1,9 +1,11 @@
 use std::{fmt, thread};
+use std::process::exit;
 use std::sync::{Arc, Mutex};
 use std::thread::{Scope, ScopedJoinHandle};
 use std::time::Duration;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
+use crate::formatted_error::FormattedError;
 use crate::test_summary::TestSummary;
 
 pub(crate) struct InitialSpinner<'scope, 'env: 'scope> {
@@ -29,17 +31,27 @@ enum JobState {
 }
 
 impl<'scope, 'env> InitialSpinner<'scope, 'env> {
-    pub(crate) fn add_job<T, E, F>(&mut self, name: &'static str, f: F) -> ScopedJoinHandle<'scope, Result<T, E>>
+    pub(crate) fn add_job<T, F>(&mut self, name: &'static str, f: F) -> ScopedJoinHandle<'scope, T>
     where
         T: Send + 'scope,
-        E: Send + 'scope,
-        F: FnOnce() -> Result<T, E> + Send + 'scope,
+        F: FnOnce() -> Result<T, FormattedError> + Send + 'scope,
     {
         let data = self.data.clone();
         let job_id = data.add_job(name);
         self.scope.spawn(move || {
             let result = f();
-            data.set_job_state(job_id, if result.is_ok() { JobState::Done } else { JobState::Failed });
+            let result = match result {
+                Ok(result) => {
+                    data.set_job_state(job_id, JobState::Done);
+                    result
+                },
+                Err(error) => {
+                    data.set_job_state(job_id, JobState::Failed);
+                    data.bar.finish();
+                    println!("\n");
+                    exit_with_error(error)
+                }
+            };
             result
         })
     }
@@ -52,10 +64,11 @@ where
     let style = ProgressStyle::with_template("[{spinner:.cyan}] {msg}\n{warming}")
         .expect("Progress bar creation failed!")
         .with_key("warming", |_state: &ProgressState, w: &mut dyn fmt::Write| {
-            write!(w, "{}", "Please wait while Toster is warming up".bright_black()).expect("Displaying the progress bar failed!");
+            if !_state.is_finished() {
+                write!(w, "{}", "Please wait while Toster is warming up".bright_black()).expect("Displaying the progress bar failed!");
+            }
         })
         .tick_strings(&[
-            "       =",
             "=       ",
             "==      ",
             "===     ",
@@ -66,6 +79,7 @@ where
             "     ===",
             "      ==",
             "       =",
+            "xxxxxxxx",
         ]);
     let bar = ProgressBar::new_spinner().with_style(style).with_message("Starting...");
     bar.enable_steady_tick(Duration::from_millis(100));
@@ -135,4 +149,9 @@ pub(crate) fn get_progress_bar(test_summary: &Arc<Mutex<Option<TestSummary>>>) -
         );
 
     ProgressBar::new(test_count as u64).with_style(style)
+}
+
+fn exit_with_error(error: FormattedError) -> ! {
+    println!("{}", error);
+    exit(1)
 }

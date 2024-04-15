@@ -192,7 +192,6 @@ fn try_main() -> Result<(), FormattedError> {
 		compile_command: &config.compile_command,
 	};
 
-	// Note: errors are only displayed after all jobs settle (fail or succeed)
 	let (runner, checker, inputs) = start_initial_spinner(|mut spinner| {
 		let runner_handle = spinner.add_job("compiling program", || {
 			let (executable, _) = compiler
@@ -221,17 +220,17 @@ fn try_main() -> Result<(), FormattedError> {
 		} else { None };
 
 		let inputs_handle = spinner.add_job("preparing inputs", || {
-			Ok(match &config.input {
+			match &config.input {
 				InputConfig::Directory { directory, ext } => {
-					prepare_file_inputs(directory, ext)?
+					prepare_file_inputs(directory, ext)
 				},
-			})
+			}
 		});
 
 		Ok((
-			runner_handle.join().unwrap()?,
-			checker_handle.map(|handle| handle.join().unwrap()).transpose()?,
-			inputs_handle.join().unwrap()?,
+			runner_handle.join().unwrap(),
+			checker_handle.map(|handle| handle.join().unwrap()),
+			inputs_handle.join().unwrap(),
 		))
 	})?;
 
