@@ -155,3 +155,49 @@ fn exit_with_error(error: FormattedError) -> ! {
     println!("{}", error);
     exit(1)
 }
+
+pub(crate) fn print_output(stopped_early: bool, test_summary: &mut Option<TestSummary>) {
+    let Some(test_summary) = test_summary else {
+        println!("{}", "Toster was stopped before testing could start".red());
+        return;
+    };
+
+    if stopped_early {
+        println!();
+    }
+
+    let additional_info = match (&test_summary.slowest_test, &test_summary.most_memory_used) {
+        (None, None) => "".to_string(),
+        (Some((duration, slowest_test_name)), None) => format!(
+            " (Slowest test: {} at {:.3}s)",
+            slowest_test_name, duration.as_secs_f32(),
+        ),
+        (None, Some((memory, most_memory_test_name))) => format!(
+            " (Most memory used: {} at {:.3}KiB)",
+            most_memory_test_name, memory,
+        ),
+        (Some((duration, slowest_test_name)), Some((memory, most_memory_test_name))) => format!(
+            " (Slowest test: {} at {:.3}s, most memory used: {} at {}KiB)",
+            slowest_test_name, duration.as_secs_f32(),
+            most_memory_test_name, memory,
+        ),
+    };
+
+    println!(
+        "{} {} {:.2}s{}\nResults: {}",
+        if test_summary.generate_mode { "Generating" } else { "Testing" },
+        if stopped_early {"stopped after"} else {"finished in"},
+        test_summary.start_time.elapsed().as_secs_f64(),
+        additional_info,
+        test_summary.format_counts(true),
+    );
+
+    let incorrect_results = test_summary.get_errors();
+    if !incorrect_results.is_empty() {
+        println!("Errors were found in the following tests:");
+
+        for (test_name, error) in incorrect_results.iter() {
+            println!("{}", error.to_string(test_name));
+        }
+    }
+}
