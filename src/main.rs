@@ -192,6 +192,7 @@ fn try_main() -> Result<(), FormattedError> {
 		compile_command: &config.compile_command,
 	};
 
+	// Note: errors are only displayed after all jobs settle (fail or succeed)
 	let (runner, checker, inputs) = start_initial_spinner(|mut spinner| {
 		let runner_handle = spinner.add_job("compiling program", || {
 			let (executable, _) = compiler
