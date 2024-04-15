@@ -193,6 +193,14 @@ fn try_main() -> Result<(), FormattedError> {
 	};
 
 	let (runner, checker, inputs) = start_initial_spinner(|mut spinner| {
+		let inputs_handle = spinner.add_job("preparing inputs", || {
+			match &config.input {
+				InputConfig::Directory { directory, ext } => {
+					prepare_file_inputs(directory, ext)
+				},
+			}
+		});
+
 		let runner_handle = spinner.add_job("compiling program", || {
 			let (executable, _) = compiler
 				.prepare_executable(&config.source_path, "program")
@@ -218,14 +226,6 @@ fn try_main() -> Result<(), FormattedError> {
 				Ok(Checker::new(executable, config.execute_timeout))
 			}))
 		} else { None };
-
-		let inputs_handle = spinner.add_job("preparing inputs", || {
-			match &config.input {
-				InputConfig::Directory { directory, ext } => {
-					prepare_file_inputs(directory, ext)
-				},
-			}
-		});
 
 		Ok((
 			runner_handle.join().unwrap(),
