@@ -9,9 +9,9 @@ mod temp_files;
 mod checker;
 mod compiler;
 mod formatted_error;
+mod output;
 
-use std::{fs, panic, thread};
-use std::fmt::Write as FmtWrite;
+use std::{fs, panic};
 use std::fs::File;
 use std::panic::PanicInfo;
 use std::path::PathBuf;
@@ -22,7 +22,7 @@ use std::sync::atomic::Ordering::{Acquire, Release};
 use clap::Parser;
 use colored::Colorize;
 use human_panic::{handle_dump, print_msg};
-use indicatif::{ParallelProgressIterator, ProgressBar, ProgressState, ProgressStyle};
+use indicatif::{ParallelProgressIterator, ProgressBar};
 use rayon::prelude::*;
 use tempfile::tempdir;
 use args::Args;
@@ -41,6 +41,7 @@ use crate::testing_utils::compare_output;
 use crate::executor::sio2jail::Sio2jailExecutor;
 use crate::formatted_error::FormattedError;
 use crate::generic_utils::halt;
+use crate::output::{get_progress_bar, start_initial_spinner};
 
 static RECEIVED_CTRL_C: AtomicBool = AtomicBool::new(false);
 
@@ -191,30 +192,34 @@ fn try_main() -> Result<(), FormattedError> {
 		compile_command: &config.compile_command,
 	};
 
-	let (runner, checker, inputs) = thread::scope(|scope| {
-		let runner_handle = scope.spawn(|| {
-			let (executable, compilation_time) = compiler
+	let (runner, checker, inputs) = start_initial_spinner(|mut spinner| {
+		let runner_handle = spinner.add_job("compiling program", || {
+			let (executable, _) = compiler
 				.prepare_executable(&config.source_path, "program")
 				.map_err(|error| error.to_formatted(false))?;
-			if let Some(compilation_time) = compilation_time {
-				println!("{}", format!("Program compilation completed in {:.2}", compilation_time.as_secs_f32()).green());
-			}
+			// TODO: Restore or remove
+			// println! doesn't work correctly with the progress bar
+
+			// if let Some(compilation_time) = compilation_time {
+			// 	println!("{}", format!("Program compilation completed in {:.2}", compilation_time.as_secs_f32()).green());
+			// }
 			init_runner(executable, &config)
 		});
 
 		let checker_handle = if let ActionType::Checker { path } = &config.action_type {
-			Some(scope.spawn(|| {
-				let (executable, compilation_time) = compiler
+			Some(spinner.add_job("compiling checker", || {
+				let (executable, _) = compiler
 					.prepare_executable(path, "checker")
 					.map_err(|error| error.to_formatted(true))?;
-				if let Some(compilation_time) = compilation_time {
-					println!("{}", format!("Checker compilation completed in {:.2}", compilation_time.as_secs_f32()).green());
-				}
+				// TODO: Restore or remove
+				// if let Some(compilation_time) = compilation_time {
+				// 	println!("{}", format!("Checker compilation completed in {:.2}", compilation_time.as_secs_f32()).green());
+				// }
 				Ok(Checker::new(executable, config.execute_timeout))
 			}))
 		} else { None };
 
-		let inputs_handle = scope.spawn(|| {
+		let inputs_handle = spinner.add_job("preparing inputs", || {
 			Ok(match &config.input {
 				InputConfig::Directory { directory, ext } => {
 					prepare_file_inputs(directory, ext)?
@@ -230,22 +235,7 @@ fn try_main() -> Result<(), FormattedError> {
 	})?;
 
 	*test_summary.lock().expect("Failed to lock test summary mutex") = Some(TestSummary::new(config.generate_mode(), inputs.test_count));
-
-	// Progress bar styling
-    let style: ProgressStyle = {
-        let test_summary = test_summary.clone();
-        ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{counts} {ctrlc}")
-            .expect("Progress bar creation failed")
-            .with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed"))
-            .progress_chars("#>-")
-            .with_key("counts", move |_state: &ProgressState, w: &mut dyn FmtWrite| {
-                write!(w, "{}", test_summary.lock().expect("Failed to lock test summary mutex").as_ref().unwrap().format_counts(false)).expect("Displaying the progress bar failed")
-            })
-            .with_key("ctrlc", |_state: &ProgressState, w: &mut dyn FmtWrite|
-                write!(w, "{}", "(Press Ctrl+C to stop testing and print current results)".bright_black()).expect("Displaying the progress bar Ctrl+C message failed")
-            )
-    };
-	let progress_bar = ProgressBar::new(inputs.test_count as u64).with_style(style);
+	let progress_bar = get_progress_bar(&test_summary);
 
 	match config.action_type {
 		ActionType::Generate { output_directory, output_ext } => {
