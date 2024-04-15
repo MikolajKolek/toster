@@ -19,20 +19,27 @@ struct InitialSpinnerData {
 
 struct InitialSpinnerJob {
     name: &'static str,
-    done: bool,
+    state: JobState,
+}
+
+enum JobState {
+    Working,
+    Done,
+    Failed,
 }
 
 impl<'scope, 'env> InitialSpinner<'scope, 'env> {
-    pub(crate) fn add_job<T, F>(&mut self, name: &'static str, f: F) -> ScopedJoinHandle<'scope, T>
+    pub(crate) fn add_job<T, E, F>(&mut self, name: &'static str, f: F) -> ScopedJoinHandle<'scope, Result<T, E>>
     where
         T: Send + 'scope,
-        F: FnOnce() -> T + Send + 'scope,
+        E: Send + 'scope,
+        F: FnOnce() -> Result<T, E> + Send + 'scope,
     {
         let data = self.data.clone();
         let job_id = data.add_job(name);
         self.scope.spawn(move || {
             let result = f();
-            data.finish_job(job_id);
+            data.set_job_state(job_id, if result.is_ok() { JobState::Done } else { JobState::Failed });
             result
         })
     }
@@ -83,10 +90,11 @@ impl InitialSpinnerData {
     fn update_message(&self) {
         let jobs = self.jobs.lock().unwrap();
         let parts: Vec<String> = jobs.iter().map(|job| {
-            if job.done {
-                job.name.green().to_string()
-            } else {
-                job.name.to_string()
+            use JobState::*;
+            match &job.state {
+                Working => job.name.to_string(),
+                Done => job.name.green().to_string(),
+                Failed => job.name.red().to_string(),
             }
         }).collect();
         self.bar.set_message(parts.join(&", ".bright_black().to_string()));
@@ -97,16 +105,16 @@ impl InitialSpinnerData {
         let index = jobs.len();
         jobs.push(InitialSpinnerJob {
             name,
-            done: false,
+            state: JobState::Working,
         });
         drop(jobs);
         self.update_message();
         index
     }
 
-    fn finish_job(&self, job_id: usize) {
+    fn set_job_state(&self, job_id: usize, state: JobState) {
         let mut jobs = self.jobs.lock().unwrap();
-        jobs[job_id].done = true;
+        jobs[job_id].state = state;
         drop(jobs);
         self.update_message();
     }
