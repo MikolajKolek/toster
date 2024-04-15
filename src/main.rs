@@ -20,7 +20,6 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Acquire, Release};
 use clap::Parser;
-use colored::Colorize;
 use human_panic::{handle_dump, print_msg};
 use indicatif::{ParallelProgressIterator, ProgressBar};
 use rayon::prelude::*;
