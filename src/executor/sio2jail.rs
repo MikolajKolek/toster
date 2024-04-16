@@ -1,5 +1,4 @@
 use std::io::{read_to_string, Seek};
-use std::os::fd::AsRawFd;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
@@ -7,7 +6,6 @@ use std::time::Duration;
 use colored::Colorize;
 use command_fds::{CommandFdExt, FdMapping};
 use directories::BaseDirs;
-use memfile::MemFile;
 use wait_timeout::ChildExt;
 use which::which;
 use crate::temp_files::{create_temp_file, make_cloned_stdio};
