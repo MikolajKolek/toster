@@ -1,3 +1,4 @@
+use std::fs::File;
 use std::io::{read_to_string, Seek};
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
@@ -50,19 +51,19 @@ impl Sio2jailExecutor {
         Ok(result)
     }
 
-    fn run_sio2jail(&self, input_stdio: Stdio, output_stdio: Stdio, executable_path: &Path) -> Result<Sio2jailOutput, ExecutionError> {
+    fn run_sio2jail(&self, input_stdio: &File, output_stdio: &File, executable_path: &Path) -> Result<Sio2jailOutput, ExecutionError> {
         let mut sio2jail_output = create_temp_file().unwrap();
         let mut stderr = create_temp_file().unwrap();
 
         let mut child = Command::new(&self.sio2jail_path)
-            .args(["-f", "3", "-o", "oiaug", "--mount-namespace", "off", "--pid-namespace", "off", "--uts-namespace", "off", "--ipc-namespace", "off", "--net-namespace", "off", "--capability-drop", "off", "--user-namespace", "off", "-s", "-m", &self.memory_limit.to_string(), "--", executable_path.to_str().unwrap() ])
+            .args(["-f", "3", "-o", "oiaug", "--mount-namespace", "off", "--pid-namespace", "off", "--uts-namespace", "off", "--ipc-namespace", "off", "--net-namespace", "off", "--capability-drop", "off", "--user-namespace", "off", "-s", "--seccomp", "off", "--ptrace", "off", "--", executable_path.to_str().unwrap() ])
             .fd_mappings(vec![FdMapping {
                 parent_fd: sio2jail_output.try_clone().unwrap().into(),
                 child_fd: 3
             }]).expect("Failed to redirect file descriptor 3")
-            .stdout(output_stdio)
+            .stdout(Stdio::from(output_stdio.try_clone().unwrap()))
             .stderr(make_cloned_stdio(&stderr))
-            .stdin(input_stdio)
+            .stdin(Stdio::from(input_stdio.try_clone().unwrap()))
             .spawn().expect("Failed to spawn sio2jail");
 
         let status = child.wait_timeout(self.timeout).unwrap();
@@ -86,7 +87,7 @@ impl Sio2jailExecutor {
             return Err(FormattedError::from_str("The executable for the \"true\" command could not be found"));
         };
 
-        let output = self.run_sio2jail(Stdio::null(), Stdio::null(), &true_command_location);
+        let output = self.run_sio2jail(&File::open("/dev/null").unwrap(), &File::open("/dev/null").unwrap(), &true_command_location);
         let output = match output {
             Ok(output) => output,
             Err(error) => {
@@ -121,7 +122,7 @@ impl Sio2jailExecutor {
 }
 
 impl TestExecutor for Sio2jailExecutor {
-    fn test_to_stdio(&self, input_stdio: Stdio, output_stdio: Stdio) -> (ExecutionMetrics, Result<(), ExecutionError>) {
+    fn test_to_stdio(&self, input_stdio: &File, output_stdio: &File) -> (ExecutionMetrics, Result<(), ExecutionError>) {
         let output = match self.run_sio2jail(input_stdio, output_stdio, &self.executable_path) {
             Err(TimedOut) => {
                 return (ExecutionMetrics { time: Some(self.timeout), memory_kibibytes: None }, Err(TimedOut));

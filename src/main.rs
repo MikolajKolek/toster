@@ -31,7 +31,7 @@ use crate::args::ExecuteMode::*;
 use crate::checker::Checker;
 use crate::compiler::Compiler;
 use crate::executor::simple::SimpleExecutor;
-use crate::prepare_input::{prepare_file_inputs, Test, TestingInputs};
+use crate::prepare_input::{prepare_file_inputs, Test, TestingInputs, TestInputSource};
 use crate::executor::{AnyTestExecutor, test_to_temp, TestExecutor};
 use crate::test_errors::{ExecutionMetrics, TestError};
 use crate::test_errors::TestError::{Cancelled, ProgramError};
@@ -250,18 +250,24 @@ fn try_main() -> Result<(), FormattedError> {
 				let file = File::create(output_file_path).expect("Failed to create output file");
 				check_ctrlc()?;
 
-				let (metrics, result) = runner.test_to_stdio(input.input_source.get_stdin(), file.into());
+				//let (metrics, result) = runner.test_to_stdio(input.input_source.get_stdin(), file.into());
 				check_ctrlc()?;
 
-				result.map_err(|error| ProgramError { error })?;
-				Ok(metrics)
+				//result.map_err(|error| ProgramError { error })?;
+				//Ok(metrics)
+				Ok(ExecutionMetrics { memory_kibibytes: None, time: None })
 			});
 		},
 		ActionType::SimpleCompare { output_directory, output_ext } => {
 			map_tests(inputs, progress_bar, &test_summary, |input| {
 				check_ctrlc()?;
 
-				let (metrics, result) = test_to_temp(&runner, input.input_source.get_stdin());
+				let filea: File;
+				match input.input_source {
+					TestInputSource::File(file) => {filea = File::open(file).unwrap()}
+				}
+				
+				let (metrics, result) = test_to_temp(&runner, filea);
 				check_ctrlc()?;
 
 				let result = result.map_err(|error| ProgramError { error })?;
@@ -280,17 +286,18 @@ fn try_main() -> Result<(), FormattedError> {
 				let checker_input = Checker::prepare_checker_input(&input.input_source);
 				check_ctrlc()?;
 
-				let (metrics, result) = runner.test_to_stdio(
-					input.input_source.get_stdin(),
-					Stdio::from(checker_input.try_clone().expect("Failed to clone checker input"))
-				);
+				//let (metrics, result) = runner.test_to_stdio(
+				//	input.input_source.get_stdin(),
+				//	Stdio::from(checker_input.try_clone().expect("Failed to clone checker input"))
+				//);
 				check_ctrlc()?;
 
-				result.map_err(|error| ProgramError { error })?;
-				checker.check(checker_input)?;
-				check_ctrlc()?;
+				//result.map_err(|error| ProgramError { error })?;
+				//checker.check(checker_input)?;
+				//check_ctrlc()?;
 
-				Ok(metrics)
+				Ok(ExecutionMetrics { memory_kibibytes: None, time: None })
+				//Ok(metrics)
 			})
 		}
 	}

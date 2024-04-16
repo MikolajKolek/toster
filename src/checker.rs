@@ -60,7 +60,7 @@ impl Checker {
     pub(crate) fn check(&self, mut checker_input: File) -> Result<(), TestError> {
         checker_input.rewind().unwrap();
 
-        let (_, result) = test_to_temp(&self.executor, Stdio::from(checker_input));
+        let (_, result) = test_to_temp(&self.executor, checker_input);
         let output = match result {
             Ok(output) => output,
             Err(error) => {

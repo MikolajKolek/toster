@@ -25,6 +25,8 @@ is_executable = "1.0.1"
 ctrlc = "3.4.1"
 directories = "5.0.1"
 which = "5.0.0"
+libc = "0.2.153"
+perf-event-open-sys = "4.0.0"
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 command-fds = "0.3.0"
