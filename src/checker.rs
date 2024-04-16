@@ -42,6 +42,11 @@ impl Checker {
         }
     }
 
+    /// Creates a new temporary file for the checker input and writes the program input to it.
+    /// The cursor is left at the end (not rewound).
+    ///
+    /// The program output should be appended to this file before calling check() on it,
+    /// which can be done by passing the file as stdin to the tested program.
     pub(crate) fn prepare_checker_input(input_source: &TestInputSource) -> File {
         let mut input_memfile = create_temp_file().unwrap();
         io::copy(&mut input_source.read(), &mut input_memfile).unwrap();
@@ -49,6 +54,9 @@ impl Checker {
         input_memfile
     }
 
+    /// Run checker on input file created using `prepare_checker_input()`.
+    /// The program output should be appended to that file.
+    /// `check()` will rewind `checker_input` before running checker.
     pub(crate) fn check(&self, mut checker_input: File) -> Result<(), TestError> {
         checker_input.rewind().unwrap();
 

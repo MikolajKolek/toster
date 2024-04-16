@@ -11,16 +11,24 @@ use crate::temp_files::create_temp_file;
 use crate::test_errors::{ExecutionError, ExecutionMetrics};
 
 pub(crate) trait TestExecutor: Sync + Send {
+    /// Executes the program.
+    /// Stdin is read from `input_stdio`, stderr is ignored.
+    /// Stdout is written to `output_stdio`.
+    /// `input_stdio` might not be read fully. `output_stdio` **is not** rewound.
     fn test_to_stdio(&self, input_stdio: Stdio, output_stdio: Stdio) -> (ExecutionMetrics, Result<(), ExecutionError>);
 }
 
+/// Creates a tempfile for stdout and executes the program.
+/// Returns execution metrics and output file (if there are no errors during execution).
+/// Stdin is read from `input_stdio`, stderr is ignored.
+/// `input_stdio` might not be read fully. Output file **is** rewound before returning.
 pub(crate) fn test_to_temp(executor: &impl TestExecutor, input_stdio: Stdio) -> (ExecutionMetrics, Result<impl Read, ExecutionError>) {
     let mut stdout_memfile = create_temp_file().expect("Failed to create memfile");
     let (metrics, result) = executor.test_to_stdio(
         input_stdio,
         Stdio::from(stdout_memfile.try_clone().unwrap()),
     );
-    stdout_memfile.rewind().expect("Failed to seek memfile");
+    stdout_memfile.rewind().expect("Failed to rewind memfile");
     (metrics, result.map(|_| stdout_memfile))
 }
 
