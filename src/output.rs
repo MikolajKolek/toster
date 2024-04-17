@@ -58,6 +58,16 @@ impl<'scope, 'data, 'env> InitialSpinner<'scope, 'data, 'env> {
     }
 }
 
+/// Displays warming up animation and lists of running or completed startup jobs.
+/// `callback` is called with a reference to an `InitialSpinner` instance.
+/// Use `InitialSpinner::add_job()` to start new startup job. The jobs are run concurrently.
+///
+/// All jobs should return a `Result<T, FormattedError>`.
+/// If a job exits early with an error ``exit_with_error` is called,
+/// so errors are handled as soon as possible.
+///
+/// `start_initial_spinner` calls `std::thread::scope` under the hood so,
+/// jobs are automatically waited for before `start_initial_spinner` returns.
 pub(crate) fn start_initial_spinner<'env, T, F>(callback: F) -> T
 where
     F: for<'spinner, 'scope, 'data> FnOnce(&'spinner mut InitialSpinner<'scope, 'data, 'env>) -> T,
