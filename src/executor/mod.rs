@@ -7,7 +7,7 @@ use std::process::Stdio;
 use crate::executor::simple::SimpleExecutor;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use crate::executor::sio2jail::Sio2jailExecutor;
-use crate::temp_files::create_temp_file;
+use crate::temp_files::{create_temp_file, make_cloned_stdio};
 use crate::test_errors::{ExecutionError, ExecutionMetrics};
 
 pub(crate) trait TestExecutor: Sync + Send {
@@ -26,7 +26,7 @@ pub(crate) fn test_to_temp(executor: &impl TestExecutor, input_stdio: Stdio) -> 
     let mut stdout_memfile = create_temp_file().expect("Failed to create memfile");
     let (metrics, result) = executor.test_to_stdio(
         input_stdio,
-        Stdio::from(stdout_memfile.try_clone().unwrap()),
+        make_cloned_stdio(&stdout_memfile),
     );
     stdout_memfile.rewind().expect("Failed to rewind memfile");
     (metrics, result.map(|_| stdout_memfile))

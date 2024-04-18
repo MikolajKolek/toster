@@ -15,7 +15,7 @@ use std::fmt::Write as FmtWrite;
 use std::fs::File;
 use std::panic::PanicInfo;
 use std::path::PathBuf;
-use std::process::{exit, ExitCode, Stdio};
+use std::process::{exit, ExitCode};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Acquire, Release};
@@ -41,6 +41,7 @@ use crate::testing_utils::compare_output;
 use crate::executor::sio2jail::Sio2jailExecutor;
 use crate::formatted_error::FormattedError;
 use crate::generic_utils::halt;
+use crate::temp_files::make_cloned_stdio;
 
 static RECEIVED_CTRL_C: AtomicBool = AtomicBool::new(false);
 
@@ -281,7 +282,7 @@ fn try_main() -> Result<(), FormattedError> {
 
 				let (metrics, result) = runner.test_to_stdio(
 					input.input_source.get_stdin(),
-					Stdio::from(checker_input.try_clone().expect("Failed to clone checker input"))
+					make_cloned_stdio(&checker_input),
 				);
 				check_ctrlc()?;
 

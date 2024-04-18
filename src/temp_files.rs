@@ -4,8 +4,8 @@ use std::process::Stdio;
 #[cfg(target_os = "linux")]
 use memfile::MemFile;
 
-pub(crate) fn make_cloned_stdio(mem_file: &File) -> Stdio {
-    Stdio::from(mem_file.try_clone().unwrap())
+pub(crate) fn make_cloned_stdio(file: &File) -> Stdio {
+    Stdio::from(file.try_clone().unwrap())
 }
 
 /// Creates a memfile using the `memfile` crate on Linux
