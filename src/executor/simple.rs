@@ -6,9 +6,9 @@ use wait_timeout::ChildExt;
 use crate::executor::TestExecutor;
 use crate::test_errors::ExecutionError::{RuntimeError, TimedOut};
 
-#[cfg(all(unix))]
+#[cfg(unix)]
 use crate::generic_utils::halt;
-#[cfg(all(unix))]
+#[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
 pub(crate) struct SimpleExecutor {
@@ -29,7 +29,7 @@ impl SimpleExecutor {
                     halt();
                 }
 
-                Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", status.to_string())))
+                Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", status)))
             }
         }
     }

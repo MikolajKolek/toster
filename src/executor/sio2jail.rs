@@ -116,7 +116,7 @@ impl Sio2jailExecutor {
             sio2jail_path: Self::get_sio2jail_path()?,
         };
         executor.test()?;
-        return Ok(executor)
+        Ok(executor)
     }
 }
 
@@ -156,12 +156,12 @@ impl TestExecutor for Sio2jailExecutor {
 
         match output.status.code() {
             None => {
-                #[cfg(all(unix))]
+                #[cfg(unix)]
                 if cfg!(unix) && output.status.signal().expect("Sio2jail returned an invalid status code") == 2 {
                     halt();
                 }
 
-                return (metrics, Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", output.status.to_string()))))
+                return (metrics, Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", output.status))))
             }
             Some(0) => {}
             Some(exit_code) => {
@@ -169,13 +169,13 @@ impl TestExecutor for Sio2jailExecutor {
             }
         }
 
-        return (ExecutionMetrics { time: Some(time), memory_kibibytes: Some(memory_kibibytes) }, match sio2jail_status {
+        (ExecutionMetrics { time: Some(time), memory_kibibytes: Some(memory_kibibytes) }, match sio2jail_status {
             "OK" => Ok(()),
-            "RE" | "RV" => Err(RuntimeError(error_message.and_then(|message| Some(format!("- {}", message))).unwrap_or(String::new()))),
+            "RE" | "RV" => Err(RuntimeError(error_message.map(|message| format!("- {}", message)).unwrap_or(String::new()))),
             "TLE" => Err(TimedOut),
             "MLE" => Err(MemoryLimitExceeded),
             "OLE" => Err(RuntimeError("- output limit exceeded".to_string())),
             _ => Err(Sio2jailError(format!("Sio2jail returned an invalid status in the output: {}", sio2jail_status)))
-        });
+        })
     }
 }

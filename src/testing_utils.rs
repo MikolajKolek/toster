@@ -34,7 +34,7 @@ fn split_trim_end(to_split: &str) -> Vec<&str> {
 		res.pop();
 	}
 
-	return res;
+	res
 }
 
 fn generate_diff(expected_split: &[&str], actual_split: &[&str]) -> String {
@@ -72,5 +72,5 @@ fn generate_diff(expected_split: &[&str], actual_split: &[&str]) -> String {
 		}
 	}
 
-	return table.to_string().replace("\r", "");
+	table.to_string().replace('\r', "")
 }

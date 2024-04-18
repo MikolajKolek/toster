@@ -50,7 +50,7 @@ impl Checker {
     pub(crate) fn prepare_checker_input(input_source: &TestInputSource) -> File {
         let mut input_memfile = create_temp_file().unwrap();
         io::copy(&mut input_source.read(), &mut input_memfile).unwrap();
-        input_memfile.write("\n".as_bytes()).unwrap();
+        input_memfile.write_all("\n".as_bytes()).unwrap();
         input_memfile
     }
 

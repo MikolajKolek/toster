@@ -113,7 +113,6 @@ fn setup_panic() {
 	}
 }
 
-#[must_use]
 fn check_ctrlc() -> Result<(), TestError> {
 	if RECEIVED_CTRL_C.load(Acquire) { Err(Cancelled) }
 	else { Ok(()) }
