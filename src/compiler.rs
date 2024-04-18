@@ -61,12 +61,12 @@ impl<'a> Compiler<'a> {
     fn compile_cpp(&self, source_path: &Path, executable_path: &Path) -> Result<Duration, String> {
         let cmd = self.compile_command
             .replace("<IN>", source_path.to_str().expect("The provided filename is invalid"))
-            .replace("<OUT>", &executable_path.to_str().expect("The provided filename is invalid"));
-        let mut split_cmd = cmd.split(" ");
+            .replace("<OUT>", executable_path.to_str().expect("The provided filename is invalid"));
+        let mut split_cmd = cmd.split(' ');
 
         let mut stderr = create_temp_file().expect("Failed to create memfile");
         let time_before_compilation = Instant::now();
-        let child = Command::new(&split_cmd.next().expect("The compile command is invalid"))
+        let child = Command::new(split_cmd.next().expect("The compile command is invalid"))
             .args(split_cmd)
             .stderr(make_cloned_stdio(&stderr))
             .spawn();
@@ -96,7 +96,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn try_spawning_executable(executable_path: &PathBuf) -> io::Result<()> {
-        Command::new(&executable_path)
+        Command::new(executable_path)
             .spawn()
             .map(|mut child| {
                 child.kill().expect("Failed to kill executable");
@@ -108,7 +108,7 @@ impl<'a> Compiler<'a> {
         source_path: &Path,
         name: &'static str,
     ) -> Result<(PathBuf, Option<Duration>), CompilerError> {
-        debug_assert!(PathBuf::from(name).extension() == None);
+        debug_assert!(PathBuf::from(name).extension().is_none());
         let output_path = self.tempdir.path().join(format!("{}.o", name));
 
         if !Self::is_source_file(source_path) {
