@@ -16,12 +16,11 @@ fn main() {
 		println!("cargo:warning=Couldn't locate the user's executable directory. Sio2jail was not installed");
 		process::exit(0);
 	});
-	let sio2jail_path = executable_dir.join("sio2jail");
-
 	fs::create_dir_all(executable_dir).unwrap_or_else(|_| {
 		println!("cargo:warning=Couldn't create the {} directory. Sio2jail was not installed", executable_dir.display());
 		process::exit(0);
 	});
+	let sio2jail_path = executable_dir.join("sio2jail");
 	fs::copy("sio2jail", &sio2jail_path).unwrap_or_else(|_| {
 		println!("cargo:warning=Couldn't copy sio2jail to {}. Sio2jail was not installed", executable_dir.display());
 		process::exit(0);
