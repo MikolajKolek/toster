@@ -2,7 +2,6 @@ use std::fs::File;
 use std::io::{read_to_string, Seek, Write};
 use std::path::PathBuf;
 use std::io;
-use std::process::Stdio;
 use std::time::Duration;
 use colored::Colorize;
 use crate::executor::simple::SimpleExecutor;
@@ -49,7 +48,7 @@ impl Checker {
     /// which can be done by passing the file as stdin to the tested program.
     pub(crate) fn prepare_checker_input(input_source: &TestInputSource) -> File {
         let mut input_memfile = create_temp_file().unwrap();
-        io::copy(&mut input_source.read(), &mut input_memfile).unwrap();
+        io::copy(&mut input_source.get_file(), &mut input_memfile).unwrap();
         input_memfile.write_all("\n".as_bytes()).unwrap();
         input_memfile
     }
@@ -60,7 +59,7 @@ impl Checker {
     pub(crate) fn check(&self, mut checker_input: File) -> Result<(), TestError> {
         checker_input.rewind().unwrap();
 
-        let (_, result) = test_to_temp(&self.executor, Stdio::from(checker_input));
+        let (_, result) = test_to_temp(&self.executor, &checker_input);
         let output = match result {
             Ok(output) => output,
             Err(error) => {

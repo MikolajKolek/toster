@@ -41,7 +41,6 @@ use crate::testing_utils::compare_output;
 use crate::executor::sio2jail::Sio2jailExecutor;
 use crate::formatted_error::FormattedError;
 use crate::generic_utils::halt;
-use crate::temp_files::make_cloned_stdio;
 
 static RECEIVED_CTRL_C: AtomicBool = AtomicBool::new(false);
 
@@ -250,7 +249,7 @@ fn try_main() -> Result<(), FormattedError> {
 				let file = File::create(output_file_path).expect("Failed to create output file");
 				check_ctrlc()?;
 
-				let (metrics, result) = runner.test_to_stdio(input.input_source.get_stdin(), file.into());
+				let (metrics, result) = runner.test_to_stdio(&input.input_source.get_file(), &file);
 				check_ctrlc()?;
 
 				result.map_err(|error| ProgramError { error })?;
@@ -261,7 +260,7 @@ fn try_main() -> Result<(), FormattedError> {
 			map_tests(inputs, progress_bar, &test_summary, |input| {
 				check_ctrlc()?;
 
-				let (metrics, result) = test_to_temp(&runner, input.input_source.get_stdin());
+				let (metrics, result) = test_to_temp(&runner, &input.input_source.get_file());
 				check_ctrlc()?;
 
 				let result = result.map_err(|error| ProgramError { error })?;
@@ -281,8 +280,8 @@ fn try_main() -> Result<(), FormattedError> {
 				check_ctrlc()?;
 
 				let (metrics, result) = runner.test_to_stdio(
-					input.input_source.get_stdin(),
-					make_cloned_stdio(&checker_input),
+					&input.input_source.get_file(),
+					&checker_input,
 				);
 				check_ctrlc()?;
 

@@ -1,7 +1,5 @@
 use std::fs::{File, read_dir};
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator};
 use rayon::vec::IntoIter;
 use crate::formatted_error::FormattedError;
@@ -11,15 +9,9 @@ pub(crate) enum TestInputSource {
 }
 
 impl TestInputSource {
-    pub(crate) fn get_stdin(&self) -> Stdio {
+    pub(crate) fn get_file(&self) -> File {
         match self {
-            TestInputSource::File(path) => Stdio::from(File::open(path).expect("Failed to open input file"))
-        }
-    }
-
-    pub(crate) fn read(&self) -> impl Read {
-        match self {
-            TestInputSource::File(path) => { File::open(path).expect("Failed to open input file") }
+            TestInputSource::File(path) => { File::open(path).expect("Failed to open input file") },
         }
     }
 }

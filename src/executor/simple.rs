@@ -1,3 +1,4 @@
+use std::fs::File;
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
@@ -10,6 +11,7 @@ use crate::test_errors::ExecutionError::{RuntimeError, TimedOut};
 use crate::generic_utils::halt;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
+use crate::temp_files::make_cloned_stdio;
 
 pub(crate) struct SimpleExecutor {
     pub(crate) timeout: Duration,
@@ -52,10 +54,10 @@ impl SimpleExecutor {
 }
 
 impl TestExecutor for SimpleExecutor {
-    fn test_to_stdio(&self, input_stdio: Stdio, output_stdio: Stdio) -> (ExecutionMetrics, Result<(), ExecutionError>) {
+    fn test_to_stdio(&self, input_file: &File, output_file: &File) -> (ExecutionMetrics, Result<(), ExecutionError>) {
         let child = Command::new(&self.executable_path)
-            .stdin(input_stdio)
-            .stdout(output_stdio)
+            .stdin(make_cloned_stdio(input_file))
+            .stdout(make_cloned_stdio(output_file))
             .stderr(Stdio::null())
             .spawn().expect("Failed to spawn child");
 

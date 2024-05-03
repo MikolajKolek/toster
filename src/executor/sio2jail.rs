@@ -1,7 +1,8 @@
+use std::fs::File;
 use std::io::{read_to_string, Seek};
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus};
 use std::time::Duration;
 use colored::Colorize;
 use command_fds::{CommandFdExt, FdMapping};
@@ -50,7 +51,7 @@ impl Sio2jailExecutor {
         Ok(result)
     }
 
-    fn run_sio2jail(&self, input_stdio: Stdio, output_stdio: Stdio, executable_path: &Path) -> Result<Sio2jailOutput, ExecutionError> {
+    fn run_sio2jail(&self, input_file: &File, output_file: &File, executable_path: &Path) -> Result<Sio2jailOutput, ExecutionError> {
         let mut sio2jail_output = create_temp_file().unwrap();
         let mut stderr = create_temp_file().unwrap();
 
@@ -60,9 +61,9 @@ impl Sio2jailExecutor {
                 parent_fd: sio2jail_output.try_clone().unwrap().into(),
                 child_fd: 3
             }]).expect("Failed to redirect file descriptor 3")
-            .stdout(output_stdio)
+            .stdout(make_cloned_stdio(output_file))
             .stderr(make_cloned_stdio(&stderr))
-            .stdin(input_stdio)
+            .stdin(make_cloned_stdio(input_file))
             .spawn().expect("Failed to spawn sio2jail");
 
         let status = child.wait_timeout(self.timeout).unwrap();
@@ -86,7 +87,8 @@ impl Sio2jailExecutor {
             return Err(FormattedError::from_str("The executable for the \"true\" command could not be found"));
         };
 
-        let output = self.run_sio2jail(Stdio::null(), Stdio::null(), &true_command_location);
+        let null_file = File::open("/dev/null").expect("Opening /dev/null should not fail");
+        let output = self.run_sio2jail(&null_file, &null_file, &true_command_location);
         let output = match output {
             Ok(output) => output,
             Err(error) => {
@@ -121,8 +123,8 @@ impl Sio2jailExecutor {
 }
 
 impl TestExecutor for Sio2jailExecutor {
-    fn test_to_stdio(&self, input_stdio: Stdio, output_stdio: Stdio) -> (ExecutionMetrics, Result<(), ExecutionError>) {
-        let output = match self.run_sio2jail(input_stdio, output_stdio, &self.executable_path) {
+    fn test_to_stdio(&self, input_file: &File, output_file: &File) -> (ExecutionMetrics, Result<(), ExecutionError>) {
+        let output = match self.run_sio2jail(input_file, output_file, &self.executable_path) {
             Err(TimedOut) => {
                 return (ExecutionMetrics { time: Some(self.timeout), memory_kibibytes: None }, Err(TimedOut));
             }
