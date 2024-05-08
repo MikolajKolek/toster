@@ -72,10 +72,7 @@ fn check_ctrlc() -> Result<(), TestError> {
 
 fn init_runner(executable: PathBuf, config: &ParsedConfig) -> Result<AnyTestExecutor, FormattedError> {
 	Ok(match config.execute_mode {
-		Simple => AnyTestExecutor::Simple(SimpleExecutor {
-			executable_path: executable,
-			timeout: config.execute_timeout,
-		}),
+		Simple => AnyTestExecutor::Simple(SimpleExecutor::init(&executable, config.execute_timeout)),
 		#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 		Sio2jail { memory_limit } => AnyTestExecutor::Sio2Jail(Sio2jailExecutor::init_and_test(
 			config.execute_timeout,

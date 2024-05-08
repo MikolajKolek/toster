@@ -19,10 +19,7 @@ pub(crate) struct Checker {
 impl Checker {
     pub(crate) fn new(checker_executable: PathBuf, timeout: Duration) -> Self {
         Checker {
-            executor: SimpleExecutor {
-                executable_path: checker_executable,
-                timeout,
-            }
+            executor: SimpleExecutor::init(&checker_executable, timeout)
         }
     }
 
