@@ -1,25 +1,25 @@
-use std::ffi::{c_char, c_ulong, c_void, CString};
+use std::ffi::{c_char, c_ulong, c_void, CStr, CString};
 use std::fs::File;
 use std::io::Error;
 use std::mem::{size_of, size_of_val, zeroed};
-use std::os::fd::{AsFd, AsRawFd};
-use std::path::PathBuf;
-use std::process::{Child, Command, ExitStatus, Stdio};
-use std::time::{Duration, Instant};
-use crate::test_errors::{ExecutionError, ExecutionMetrics};
-use wait_timeout::ChildExt;
-use crate::executor::TestExecutor;
-use crate::test_errors::ExecutionError::{RuntimeError, TimedOut};
-
-use libc::{__u64, c_int, c_long, CLD_EXITED, close, dup2, execv, F_SETFD, fcntl, FD_CLOEXEC, fork, id_t, kill, MAP_ANONYMOUS, MAP_SHARED, memset, mmap, munmap, O_CLOEXEC, O_CREAT, O_RDONLY, O_WRONLY, open, P_PID, PROT_READ, PROT_WRITE, pthread_barrier_destroy, pthread_barrier_init, pthread_barrier_t, pthread_barrier_wait, pthread_barrierattr_destroy, pthread_barrierattr_init, pthread_barrierattr_setpshared, pthread_barrierattr_t, PTHREAD_PROCESS_SHARED, read, S_IRUSR, S_IWUSR, siginfo_t, SIGKILL, vfork, wait, waitid, WEXITED, WNOWAIT, WSTOPPED};
-use perf_event_open_sys::bindings::{PERF_COUNT_HW_INSTRUCTIONS, perf_event_attr, PERF_FLAG_FD_CLOEXEC, PERF_FLAG_FD_NO_GROUP, PERF_TYPE_HARDWARE};
-use perf_event_open_sys::perf_event_open;
-
-#[cfg(all(unix))]
-use crate::generic_utils::halt;
+use std::os::fd::AsRawFd;
 #[cfg(all(unix))]
 use std::os::unix::process::ExitStatusExt;
+use std::path::PathBuf;
+use std::process::{Child, ExitStatus};
 use std::ptr::null;
+use std::time::{Duration, Instant};
+
+use libc::{__u64, c_int, c_long, CLD_EXITED, clone, CLONE_VM, close, dup2, execve, id_t, malloc, MAP_ANONYMOUS, MAP_SHARED, memset, mmap, munmap, P_PID, PROT_READ, PROT_WRITE, pthread_barrier_destroy, pthread_barrier_init, pthread_barrier_t, pthread_barrier_wait, pthread_barrierattr_destroy, pthread_barrierattr_init, pthread_barrierattr_setpshared, pthread_barrierattr_t, PTHREAD_PROCESS_SHARED, read, SIGCHLD, siginfo_t, wait, waitid, WEXITED, WNOWAIT, WSTOPPED};
+use perf_event_open_sys::bindings::{PERF_COUNT_HW_INSTRUCTIONS, perf_event_attr, PERF_FLAG_FD_CLOEXEC, PERF_FLAG_FD_NO_GROUP, PERF_TYPE_HARDWARE};
+use perf_event_open_sys::perf_event_open;
+use wait_timeout::ChildExt;
+
+use crate::executor::TestExecutor;
+#[cfg(all(unix))]
+use crate::generic_utils::halt;
+use crate::test_errors::{ExecutionError, ExecutionMetrics};
+use crate::test_errors::ExecutionError::{RuntimeError, TimedOut};
 
 pub(crate) struct SimpleExecutor {
     pub(crate) timeout: Duration,
@@ -79,43 +79,91 @@ impl TestExecutor for SimpleExecutor {
     }
 }
 
+pub struct ForChild {
+    pub barrier2_: *mut pthread_barrier_t,
+    pub executable_path: *const c_char,
+    pub input_path: i32,
+    pub output_path: i32
+}
+
+extern "C" fn execute_child(memory: *mut c_void) -> c_int {
+    unsafe {
+        //let barrier_: *mut pthread_barrier_t = memory as *mut pthread_barrier_t;
+        let stru: *mut ForChild = memory as *mut ForChild;
+
+        
+        //munmap((*stru).barrier2_ as *mut c_void, size_of::<pthread_barrier_t>());
+
+        //let exec_c_str = CString::new((*stru).executable_path).unwrap();
+        //let input_c_str = CString::new(input_path).unwrap();
+        //let output_c_str = CString::new(output_path).unwrap();
+
+        //let input = open(input_c_str.as_ptr(), O_RDONLY | O_CLOEXEC | O_CREAT, S_IRUSR | S_IWUSR);
+        //let output = open(output_c_str.as_ptr(), O_WRONLY | O_CLOEXEC | O_CREAT, S_IRUSR | S_IWUSR);
+        dup2((*stru).input_path as c_int, 0);
+        dup2((*stru).output_path as c_int, 1);
+        close((*stru).input_path);
+        close((*stru).output_path);
+
+        //let arr: *const *const c_char = libc::malloc(1) as *const *const c_char;
+        
+
+
+        
+       // let exec_c_str = CString::new("/home/mikolaj/sleep").unwrap();
+        
+        let arg: [*const c_char; 2] = [(*stru).executable_path, null()];
+        let envp: [*const c_char; 1] = [null()];
+        //let arr: *const *const c_char = libc::malloc(0) as *const *const c_char ;
+        pthread_barrier_wait((*stru).barrier2_);
+        execve((*stru).executable_path, arg.as_ptr(), envp.as_ptr());
+
+        println!("fuck {} {}", Error::last_os_error().raw_os_error().unwrap(), CStr::from_ptr((*stru).executable_path).to_str().unwrap());
+    }
+    
+    return 0;
+}
+
 fn run_sio2jail(executable_path: &str, input_path: i32, output_path: i32) -> u64 {
     unsafe {
         //onPreFork
         //let test: *mut c_void = null();
-        let barrier_: *mut pthread_barrier_t = mmap(0 as *mut c_void, size_of::<pthread_barrier_t>(), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, 0, 0) as *mut pthread_barrier_t;
+        //let barrier_: *mut pthread_barrier_t = mmap(0 as *mut c_void, size_of::<pthread_barrier_t>(), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, 0, 0) as *mut pthread_barrier_t;
+        let mut barrier: pthread_barrier_t = zeroed();
+        let barrier_: *mut pthread_barrier_t = &mut barrier as *mut pthread_barrier_t;
+
         let mut attr: pthread_barrierattr_t = zeroed();
         pthread_barrierattr_init(&mut attr);
         pthread_barrierattr_setpshared(&mut attr, PTHREAD_PROCESS_SHARED);
         pthread_barrier_init(barrier_, &mut attr, 2);
         pthread_barrierattr_destroy(&mut attr);
         
-        let child_pid = fork();
+        //let child_pid = fork();
+        let child_stack = malloc(256);
+        let exec_path_cstr = CString::new(executable_path).unwrap();
+        //if child_stack == 0 as *mut c_void{
+        //    println!("CHAOS")
+        //}
+        //
+        //println!("wtf {}", CStr::from_ptr(exec_path_cstr.as_ptr()).to_str().unwrap());
+        //exit(0);
+
+
+        let mut foo = ForChild {
+            barrier2_: barrier_,
+            executable_path: exec_path_cstr.as_ptr(),
+            input_path,
+            output_path
+        };
+        let foo_ptr: *mut ForChild = &mut foo as *mut ForChild;
+        let child_pid = clone(execute_child, child_stack.offset(256), CLONE_VM | SIGCHLD, foo_ptr as *mut c_void);
 
         if child_pid < 0 {
-            println!("{}", Error::last_os_error().raw_os_error().unwrap())
+            println!("wtf2 {}", Error::last_os_error().raw_os_error().unwrap())
         }
         if child_pid == 0 {
             //onPostForkChild
-            pthread_barrier_wait(barrier_);
-            munmap(barrier_ as *mut c_void, size_of::<pthread_barrier_t>());
-
-            let exec_c_str = CString::new(executable_path).unwrap();
-            //let input_c_str = CString::new(input_path).unwrap();
-            //let output_c_str = CString::new(output_path).unwrap();
-
-            //let input = open(input_c_str.as_ptr(), O_RDONLY | O_CLOEXEC | O_CREAT, S_IRUSR | S_IWUSR);
-            //let output = open(output_c_str.as_ptr(), O_WRONLY | O_CLOEXEC | O_CREAT, S_IRUSR | S_IWUSR);
-            dup2(input_path as c_int, 0); dup2(output_path as c_int, 1);
-            close(input_path); close(output_path);
-
-            //let arr: *const *const c_char = libc::malloc(1) as *const *const c_char;
-            let arg: [*const c_char; 2] = [exec_c_str.as_ptr(), null()];
-
-            //let arr: *const *const c_char = libc::malloc(0) as *const *const c_char ;
-            execv(exec_c_str.as_ptr(), arg.as_ptr());
-
-            println!("fuck")
+            println!("what the fuck")
         }
         else {
             //onPostForkParent
@@ -136,7 +184,7 @@ fn run_sio2jail(executable_path: &str, input_path: i32, output_path: i32) -> u64
             //fcntl(perf_fd, F_SETFD, FD_CLOEXEC);
             pthread_barrier_wait(barrier_);
             pthread_barrier_destroy(barrier_);
-            munmap(barrier_ as *mut c_void, size_of::<pthread_barrier_t>());
+            //munmap(barrier_ as *mut c_void, size_of::<pthread_barrier_t>());
 
             while true {
                 let mut waitinfo: siginfo_t = zeroed();
@@ -152,7 +200,7 @@ fn run_sio2jail(executable_path: &str, input_path: i32, output_path: i32) -> u64
                     let mut instructions_used: i64 = 0;
                     let size = read(perf_fd, &mut instructions_used as *mut c_long as *mut c_void, size_of_val(&instructions_used));
                     if (size != size_of_val(&instructions_used) as isize) {
-                        println!("ERROR")
+                        println!("ERROR {} {}\n\n", size, Error::last_os_error().raw_os_error().unwrap())
                     }
                     if (instructions_used < 0) {
                         println!("ERROR2")
