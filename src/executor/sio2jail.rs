@@ -123,7 +123,7 @@ impl Sio2jailExecutor {
 }
 
 impl TestExecutor for Sio2jailExecutor {
-    fn test_to_stdio(&self, input_file: &File, output_file: &File) -> (ExecutionMetrics, Result<(), ExecutionError>) {
+    fn test_to_file(&self, input_file: &File, output_file: &File) -> (ExecutionMetrics, Result<(), ExecutionError>) {
         let output = match self.run_sio2jail(input_file, output_file, &self.executable_path) {
             Err(TimedOut) => {
                 return (ExecutionMetrics { time: Some(self.timeout), memory_kibibytes: None }, Err(TimedOut));

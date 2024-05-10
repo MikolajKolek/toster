@@ -54,7 +54,7 @@ impl SimpleExecutor {
 }
 
 impl TestExecutor for SimpleExecutor {
-    fn test_to_stdio(&self, input_file: &File, output_file: &File) -> (ExecutionMetrics, Result<(), ExecutionError>) {
+    fn test_to_file(&self, input_file: &File, output_file: &File) -> (ExecutionMetrics, Result<(), ExecutionError>) {
         let child = Command::new(&self.executable_path)
             .stdin(make_cloned_stdio(input_file))
             .stdout(make_cloned_stdio(output_file))

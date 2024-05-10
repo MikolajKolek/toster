@@ -15,19 +15,19 @@ pub(crate) trait TestExecutor: Sync + Send {
     ///
     /// Stdin is read from `input_file`, stderr is ignored.
     /// Stdout is written to `output_file`.
-    /// `input_file` might not be read fully. `output_stdio` **is not** rewound.
-    fn test_to_stdio(&self, input_file: &File, output_file: &File) -> (ExecutionMetrics, Result<(), ExecutionError>);
+    /// `input_file` might not be read fully. `output_file` **is not** rewound.
+    fn test_to_file(&self, input_file: &File, output_file: &File) -> (ExecutionMetrics, Result<(), ExecutionError>);
 }
 
 /// Creates a tempfile for stdout and executes the program.
 ///
 /// Returns execution metrics and output file (if there are no errors during execution).
 ///
-/// Stdin is read from `input_stdio`, stderr is ignored.
-/// `input_stdio` might not be read fully. Output file **is** rewound before returning.
+/// Stdin is read from `input_file`, stderr is ignored.
+/// `input_file` might not be read fully. Output file **is** rewound before returning.
 pub(crate) fn test_to_temp(executor: &impl TestExecutor, input_file: &File) -> (ExecutionMetrics, Result<impl Read, ExecutionError>) {
     let mut stdout_memfile = create_temp_file().expect("Failed to create memfile");
-    let (metrics, result) = executor.test_to_stdio(
+    let (metrics, result) = executor.test_to_file(
         input_file,
         &stdout_memfile,
     );
@@ -42,11 +42,11 @@ pub(crate) enum AnyTestExecutor {
 }
 
 impl TestExecutor for AnyTestExecutor {
-    fn test_to_stdio(&self, input_file: &File, output_file: &File) -> (ExecutionMetrics, Result<(), ExecutionError>) {
+    fn test_to_file(&self, input_file: &File, output_file: &File) -> (ExecutionMetrics, Result<(), ExecutionError>) {
         match self {
-            AnyTestExecutor::Simple(executor) => executor.test_to_stdio(input_file, output_file),
+            AnyTestExecutor::Simple(executor) => executor.test_to_file(input_file, output_file),
             #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-            AnyTestExecutor::Sio2Jail(executor) => executor.test_to_stdio(input_file, output_file),
+            AnyTestExecutor::Sio2Jail(executor) => executor.test_to_file(input_file, output_file),
         }
     }
 }

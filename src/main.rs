@@ -249,7 +249,7 @@ fn try_main() -> Result<(), FormattedError> {
 				let file = File::create(output_file_path).expect("Failed to create output file");
 				check_ctrlc()?;
 
-				let (metrics, result) = runner.test_to_stdio(&input.input_source.get_file(), &file);
+				let (metrics, result) = runner.test_to_file(&input.input_source.get_file(), &file);
 				check_ctrlc()?;
 
 				result.map_err(|error| ProgramError { error })?;
@@ -279,7 +279,7 @@ fn try_main() -> Result<(), FormattedError> {
 				let checker_input = Checker::prepare_checker_input(&input.input_source);
 				check_ctrlc()?;
 
-				let (metrics, result) = runner.test_to_stdio(
+				let (metrics, result) = runner.test_to_file(
 					&input.input_source.get_file(),
 					&checker_input,
 				);
