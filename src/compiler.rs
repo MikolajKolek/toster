@@ -1,5 +1,6 @@
 use std::{fs, io};
 use std::io::ErrorKind::NotFound;
+use std::io::{read_to_string, Seek};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -9,7 +10,7 @@ use tempfile::TempDir;
 use wait_timeout::ChildExt;
 use crate::compiler::CompilerError::{CompilationError, InvalidExecutable};
 use crate::formatted_error::FormattedError;
-use crate::pipes::BufferedPipe;
+use crate::temp_files::{create_temp_file, make_cloned_stdio};
 
 pub(crate) enum CompilerError {
     InvalidExecutable(io::Error),
@@ -60,14 +61,14 @@ impl<'a> Compiler<'a> {
     fn compile_cpp(&self, source_path: &Path, executable_path: &Path) -> Result<Duration, String> {
         let cmd = self.compile_command
             .replace("<IN>", source_path.to_str().expect("The provided filename is invalid"))
-            .replace("<OUT>", &executable_path.to_str().expect("The provided filename is invalid"));
-        let mut split_cmd = cmd.split(" ");
+            .replace("<OUT>", executable_path.to_str().expect("The provided filename is invalid"));
+        let mut split_cmd = cmd.split(' ');
 
-        let mut stderr = BufferedPipe::create().expect("Failed to create stderr pipe");
+        let mut stderr = create_temp_file().expect("Failed to create memfile");
         let time_before_compilation = Instant::now();
-        let child = Command::new(&split_cmd.next().expect("The compile command is invalid"))
+        let child = Command::new(split_cmd.next().expect("The compile command is invalid"))
             .args(split_cmd)
-            .stderr(stderr.get_stdio())
+            .stderr(make_cloned_stdio(&stderr))
             .spawn();
 
         let mut child = match child {
@@ -75,11 +76,14 @@ impl<'a> Compiler<'a> {
             Err(error) if error.kind() == NotFound => { return Err("The compiler was not found".to_string()) }
             Err(error) => { return Err(error.to_string()) }
         };
+        let result = child.wait_timeout(self.compile_timeout).unwrap();
 
-        match child.wait_timeout(self.compile_timeout).unwrap() {
+        stderr.rewind().unwrap();
+
+        match result {
             Some(status) => {
                 if status.code().expect("The compiler returned an invalid status code") != 0 {
-                    let compilation_result = stderr.join().expect("Failed to read compiler output");
+                    let compilation_result = read_to_string(stderr).expect("Failed to read compiler output");
                     return Err(compilation_result);
                 }
             }
@@ -92,7 +96,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn try_spawning_executable(executable_path: &PathBuf) -> io::Result<()> {
-        Command::new(&executable_path)
+        Command::new(executable_path)
             .spawn()
             .map(|mut child| {
                 child.kill().expect("Failed to kill executable");
@@ -104,7 +108,7 @@ impl<'a> Compiler<'a> {
         source_path: &Path,
         name: &'static str,
     ) -> Result<(PathBuf, Option<Duration>), CompilerError> {
-        debug_assert!(PathBuf::from(name).extension() == None);
+        debug_assert!(PathBuf::from(name).extension().is_none());
         let output_path = self.tempdir.path().join(format!("{}.o", name));
 
         if !Self::is_source_file(source_path) {

@@ -1,5 +1,6 @@
 use std::cmp::max;
 use std::fs;
+use std::io::{Read, read_to_string};
 use std::path::Path;
 use comfy_table::{Attribute, Cell, Color, Table};
 use comfy_table::ContentArrangement::Dynamic;
@@ -7,11 +8,12 @@ use terminal_size::{Height, Width};
 use crate::test_errors::TestError;
 use crate::test_errors::TestError::{Incorrect, NoOutputFile};
 
-pub(crate) fn compare_output(expected_output_path: &Path, actual_output: &str) -> Result<(), TestError> {
+pub(crate) fn compare_output(expected_output_path: &Path, actual_output: impl Read) -> Result<(), TestError> {
 	if !expected_output_path.is_file() {
 		return Err(NoOutputFile);
 	}
 	let expected_output = fs::read_to_string(expected_output_path).expect("Failed to read output file");
+	let actual_output = read_to_string(actual_output).expect("Failed to read actual input");
 
 	let expected_output = split_trim_end(&expected_output);
 	let actual_output = split_trim_end(&actual_output);
@@ -32,7 +34,7 @@ fn split_trim_end(to_split: &str) -> Vec<&str> {
 		res.pop();
 	}
 
-	return res;
+	res
 }
 
 fn generate_diff(expected_split: &[&str], actual_split: &[&str]) -> String {
@@ -70,5 +72,5 @@ fn generate_diff(expected_split: &[&str], actual_split: &[&str]) -> String {
 		}
 	}
 
-	return table.to_string().replace("\r", "");
+	table.to_string().replace('\r', "")
 }

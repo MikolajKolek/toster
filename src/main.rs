@@ -5,13 +5,14 @@ mod prepare_input;
 mod executor;
 mod generic_utils;
 mod test_summary;
-mod pipes;
+mod temp_files;
 mod checker;
 mod compiler;
 mod formatted_error;
 
 use std::{fs, panic};
 use std::fmt::Write as FmtWrite;
+use std::fs::File;
 use std::panic::PanicInfo;
 use std::path::PathBuf;
 use std::process::{exit, ExitCode};
@@ -30,9 +31,10 @@ use crate::args::ExecuteMode::*;
 use crate::checker::Checker;
 use crate::compiler::Compiler;
 use crate::executor::simple::SimpleExecutor;
-use crate::prepare_input::prepare_file_inputs;
-use crate::executor::TestExecutor;
-use crate::test_errors::TestError::ProgramError;
+use crate::prepare_input::{prepare_file_inputs, Test, TestingInputs};
+use crate::executor::{AnyTestExecutor, test_to_temp, TestExecutor};
+use crate::test_errors::{ExecutionMetrics, TestError};
+use crate::test_errors::TestError::{Cancelled, ProgramError};
 use crate::test_summary::TestSummary;
 use crate::testing_utils::compare_output;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -111,27 +113,46 @@ fn setup_panic() {
 	}
 }
 
-#[must_use]
-fn check_ctrlc() -> Option<()> {
-	if RECEIVED_CTRL_C.load(Acquire) { None }
-	else { Some(()) }
+fn check_ctrlc() -> Result<(), TestError> {
+	if RECEIVED_CTRL_C.load(Acquire) { Err(Cancelled) }
+	else { Ok(()) }
 }
 
-fn init_runner(executable: PathBuf, config: &ParsedConfig) -> Result<Box<dyn TestExecutor>, FormattedError> {
+fn init_runner(executable: PathBuf, config: &ParsedConfig) -> Result<AnyTestExecutor, FormattedError> {
 	Ok(match config.execute_mode {
-		Simple => Box::new(SimpleExecutor {
+		Simple => AnyTestExecutor::Simple(SimpleExecutor {
 			executable_path: executable,
 			timeout: config.execute_timeout,
 		}),
 		#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-		Sio2jail { memory_limit } => {
-			Box::new(Sio2jailExecutor::init_and_test(
-				config.execute_timeout,
-				executable,
-				memory_limit,
-			)?)
-		},
+		Sio2jail { memory_limit } => AnyTestExecutor::Sio2Jail(Sio2jailExecutor::init_and_test(
+			config.execute_timeout,
+			executable,
+			memory_limit,
+		)?),
 	})
+}
+
+fn map_tests<T>(
+	inputs: TestingInputs<T>,
+	progress_bar: ProgressBar,
+	test_summary: &Arc<Mutex<Option<TestSummary>>>,
+	callback: impl Fn(Test) -> Result<ExecutionMetrics, TestError> + Sync
+) where T: IndexedParallelIterator<Item = Test> {
+	inputs.iterator.progress_with(progress_bar).try_for_each(|input| {
+		let test_name = input.test_name.clone();
+
+		let result = callback(input);
+
+		let mut test_summary = test_summary.lock().expect("Failed to lock test summary mutex");
+		let test_summary = test_summary.as_mut().unwrap();
+		match result {
+			Ok(metrics) => test_summary.add_success(&metrics, &test_name),
+			Err(Cancelled) => return None,
+			Err(error) => test_summary.add_test_error(error, test_name),
+		};
+		Some(())
+	});
 }
 
 fn main() -> ExitCode {
@@ -218,51 +239,60 @@ fn try_main() -> Result<(), FormattedError> {
 	*test_summary.lock().expect("Failed to lock test summary mutex") = Some(TestSummary::new(config.generate_mode(), inputs.test_count));
 
 	let progress_bar = ProgressBar::new(inputs.test_count as u64).with_style(style);
-	inputs.iterator.progress_with(progress_bar).try_for_each(|input| -> Option<()> {
-		check_ctrlc()?;
 
-		let (metrics, output) = runner.test_to_string(input.input_source.get_stdin());
-		check_ctrlc()?;
+	match config.action_type {
+		ActionType::Generate { output_directory, output_ext } => {
+			map_tests(inputs, progress_bar, &test_summary, |input| {
+				check_ctrlc()?;
 
-		let output = match output {
-			Ok(output) => output,
-			Err(error) => {
-				test_summary.lock().expect("Failed to lock test summary mutex").as_mut().unwrap()
-					.add_test_error(ProgramError { error }, input.test_name);
-				return Some(());
-			}
-		};
+				let output_file_path = output_directory.join(format!("{}{}", input.test_name, &output_ext));
+				let file = File::create(output_file_path).expect("Failed to create output file");
+				check_ctrlc()?;
 
-		check_ctrlc()?;
+				let (metrics, result) = runner.test_to_file(&input.input_source.get_file(), &file);
+				check_ctrlc()?;
 
-		match &config.action_type {
-			ActionType::Generate { output_directory, output_ext } => {
+				result.map_err(|error| ProgramError { error })?;
+				Ok(metrics)
+			});
+		},
+		ActionType::SimpleCompare { output_directory, output_ext } => {
+			map_tests(inputs, progress_bar, &test_summary, |input| {
+				check_ctrlc()?;
+
+				let (metrics, result) = test_to_temp(&runner, &input.input_source.get_file());
+				check_ctrlc()?;
+
+				let result = result.map_err(|error| ProgramError { error })?;
 				let output_file_path = output_directory.join(format!("{}{}", input.test_name, output_ext));
-				fs::write(&output_file_path, &output).expect("Failed to save test output");
-			},
-			ActionType::SimpleCompare { output_directory, output_ext } => {
-				let output_file_path = output_directory.join(format!("{}{}", input.test_name, output_ext));
-				if let Err(error) = compare_output(&output_file_path, &output) {
-					test_summary.lock().expect("Failed to lock test summary mutex").as_mut().unwrap()
-						.add_test_error(error, input.test_name);
-					return Some(());
-				}
-			},
-			_ => {},
-		}
-		if let Some(checker) = &checker {
-			if let Err(error) = checker.check(&input.input_source, &output) {
-				test_summary.lock().expect("Failed to lock test summary mutex").as_mut().unwrap()
-					.add_test_error(error, input.test_name);
-				return Some(());
-			}
-		}
+				compare_output(&output_file_path, result)?;
+				check_ctrlc()?;
 
-		test_summary.lock().expect("Failed to lock test summary mutex").as_mut().unwrap()
-			.add_success(&metrics, &input.test_name);
-		check_ctrlc()?;
-		Some(())
-	});
+				Ok(metrics)
+			});
+		},
+		ActionType::Checker { .. } => {
+			let checker = checker.expect("Checker should be initialized");
+			map_tests(inputs, progress_bar, &test_summary, |input| {
+				check_ctrlc()?;
+
+				let checker_input = Checker::prepare_checker_input(&input.input_source);
+				check_ctrlc()?;
+
+				let (metrics, result) = runner.test_to_file(
+					&input.input_source.get_file(),
+					&checker_input,
+				);
+				check_ctrlc()?;
+
+				result.map_err(|error| ProgramError { error })?;
+				checker.check(checker_input)?;
+				check_ctrlc()?;
+
+				Ok(metrics)
+			})
+		}
+	}
 
 	print_output(false, &mut test_summary.lock().expect("Failed to lock test summary mutex"));
 	Ok(())

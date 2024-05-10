@@ -1,16 +1,17 @@
+use std::fs::File;
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 use crate::test_errors::{ExecutionError, ExecutionMetrics};
 use wait_timeout::ChildExt;
 use crate::executor::TestExecutor;
-use crate::pipes::BufferedPipe;
 use crate::test_errors::ExecutionError::{RuntimeError, TimedOut};
 
-#[cfg(all(unix))]
+#[cfg(unix)]
 use crate::generic_utils::halt;
-#[cfg(all(unix))]
+#[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
+use crate::temp_files::make_cloned_stdio;
 
 pub(crate) struct SimpleExecutor {
     pub(crate) timeout: Duration,
@@ -25,12 +26,12 @@ impl SimpleExecutor {
                 Err(RuntimeError(format!("- the program returned a non-zero return code: {}", exit_code)))
             },
             None => {
-                #[cfg(all(unix))]
+                #[cfg(unix)]
                 if status.signal().expect("The program returned an invalid status code") == 2 {
                     halt();
                 }
 
-                Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", status.to_string())))
+                Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", status)))
             }
         }
     }
@@ -53,27 +54,13 @@ impl SimpleExecutor {
 }
 
 impl TestExecutor for SimpleExecutor {
-    // pub fn test_to_file(&self, input_source: &TestInputSource, output_path: &Path) -> (ExecutionMetrics, Result<(), ExecutionError>) {
-    //     let child = Command::new(&self.executable_path)
-    //         .stdin(input_source.get_stdin())
-    //         .stdout(output_path)
-    //         .stderr(Stdio::null())
-    //         .spawn().expect("Failed to spawn child");
-    //     self.wait_for_child(child)
-    //     input_source.close();
-    // }
-
-    fn test_to_string(&self, input_stdio: Stdio) -> (ExecutionMetrics, Result<String, ExecutionError>) {
-        let mut stdout = BufferedPipe::create().expect("Failed to create stdout pipe");
-
+    fn test_to_file(&self, input_file: &File, output_file: &File) -> (ExecutionMetrics, Result<(), ExecutionError>) {
         let child = Command::new(&self.executable_path)
-            .stdin(input_stdio)
-            .stdout(stdout.get_stdio())
+            .stdin(make_cloned_stdio(input_file))
+            .stdout(make_cloned_stdio(output_file))
             .stderr(Stdio::null())
             .spawn().expect("Failed to spawn child");
 
-        let (metrics, result) = self.wait_for_child(child);
-        let output = stdout.join();
-        (metrics, result.and_then(|_| output))
+        self.wait_for_child(child)
     }
 }

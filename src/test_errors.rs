@@ -24,6 +24,7 @@ pub enum TestError {
 		error: ExecutionError
 	},
 	NoOutputFile,
+	Cancelled,
 }
 
 #[allow(unused)]
@@ -59,15 +60,19 @@ impl TestError {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
 				result.push_str(&format!("{}", "Output file does not exist".red()));
 			}
+			TestError::Cancelled => {
+				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
+				result.push_str(&format!("{}", "Cancelled".yellow()));
+			}
 		}
 
-		return result;
+		result
 	}
 }
 
 impl ExecutionError {
 	pub fn to_string(&self) -> String {
-		return match self {
+		match self {
 			ExecutionError::TimedOut => "Timed out".to_string(),
 			ExecutionError::MemoryLimitExceeded => "Memory limit exceeded".to_string(),
 			ExecutionError::RuntimeError(error) => format!("Runtime error {}", error),
@@ -75,6 +80,6 @@ impl ExecutionError {
 			ExecutionError::IncorrectCheckerFormat(error) => format!("The checker output didn't follow the Toster checker format - {}", error),
 			ExecutionError::PipeError => "Failed to read program output".to_string(),
 			ExecutionError::OutputNotUtf8 => "The output contained invalid characters".to_string(),
-		};
+		}
 	}
 }
