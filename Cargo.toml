@@ -3,7 +3,7 @@ name = "toster"
 description = "A simple-as-toast tester for C++ solutions to competitive programming exercises"
 repository = "https://github.com/MikolajKolek/toster"
 homepage = "https://github.com/MikolajKolek/toster"
-authors = ["Mikołaj Kołek"]
+authors = ["Mikołaj Kołek", "Dominik Korsa"]
 readme = "README.md"
 license = "MIT"
 version = "1.2.1"
@@ -11,20 +11,20 @@ edition = "2021"
 build = "build.rs"
 
 [dependencies]
-clap = { version = "4.4.8", features = ["derive"] }
-indicatif = { version = "0.17.7", features = ["rayon"] }
+clap = { version = "4.5.4", features = ["derive"] }
+indicatif = { version = "0.17.8", features = ["rayon"] }
 rayon = "1.10.0"
-colored = "2.0.4"
+colored = "2.1.0"
 wait-timeout = "0.2.0"
-comfy-table = "7.1.0"
-tempfile = "3.8.1"
+comfy-table = "7.1.1"
+tempfile = "3.10.1"
 terminal_size = "0.3.0"
 human-sort = "0.2.2"
-human-panic = "1.2.2"
+human-panic = "2.0.0"
 is_executable = "1.0.1"
-ctrlc = "3.4.1"
+ctrlc = "3.4.4"
 directories = "5.0.1"
-which = "5.0.0"
+which = "6.0.1"
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 command-fds = "0.3.0"

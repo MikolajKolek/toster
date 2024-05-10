@@ -109,7 +109,8 @@ fn setup_panic() {
 				print_msg(file_path, &meta).expect("human-panic: printing error message to console failed");
 				exit(0);
 			}));
-		}
+		},
+		_ => {}
 	}
 }
 

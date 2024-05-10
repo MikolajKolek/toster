@@ -56,7 +56,7 @@ impl Sio2jailExecutor {
         let mut stderr = create_temp_file().unwrap();
 
         let mut child = Command::new(&self.sio2jail_path)
-            .args(["-f", "3", "-o", "oiaug", "--mount-namespace", "off", "--pid-namespace", "off", "--uts-namespace", "off", "--ipc-namespace", "off", "--net-namespace", "off", "--capability-drop", "off", "--user-namespace", "off", "-s", "-m", &self.memory_limit.to_string(), "--", executable_path.to_str().unwrap() ])
+            .args(["-f", "3", "-o", "oiaug", "--mount-namespace", "off", "--pid-namespace", "off", "--uts-namespace", "off", "--ipc-namespace", "off", "--net-namespace", "off", "--capability-drop", "off", "--user-namespace", "off", "-m", &self.memory_limit.to_string(), "--", executable_path.to_str().unwrap() ])
             .fd_mappings(vec![FdMapping {
                 parent_fd: sio2jail_output.try_clone().unwrap().into(),
                 child_fd: 3
