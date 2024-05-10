@@ -1,5 +1,5 @@
-use std::fs::{File, OpenOptions};
-use std::path::{Path};
+use std::fs::File;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ExitStatus};
 use std::time::{Duration, Instant};
 use crate::test_errors::{ExecutionError, ExecutionMetrics};
@@ -11,17 +11,18 @@ use crate::test_errors::ExecutionError::{RuntimeError, TimedOut};
 use crate::generic_utils::halt;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
+use std::thread;
 use crate::executor::process::start_and_wait;
 
 pub(crate) struct SimpleExecutor {
     timeout: Duration,
-    executable: File,
+    executable_path: PathBuf,
 }
 
 impl SimpleExecutor {
     pub(crate) fn init(executable_path: &Path, timeout: Duration) -> Self {
-        let executable = OpenOptions::new().read(true).write(false).open(executable_path).unwrap();
-        SimpleExecutor { timeout, executable }
+        // let executable = OpenOptions::new().read(true).write(false).open(executable_path).unwrap();
+        SimpleExecutor { timeout, executable_path: executable_path.to_owned() }
     }
 
     fn map_status_code(status: &ExitStatus) -> Result<(), ExecutionError> {
@@ -61,16 +62,16 @@ impl SimpleExecutor {
 impl TestExecutor for SimpleExecutor {
     fn test_to_stdio(&self, input_file: &File, output_file: &File) -> (ExecutionMetrics, Result<(), ExecutionError>) {
         // TODO: Open "/dev/null" once for the whole program (does it actually matter?)
-        start_and_wait(&self.executable, input_file, output_file, &File::open("/dev/null").unwrap(), |handle| {
-            // let handle = handle.clone();
+        start_and_wait(&self.executable_path, input_file, output_file, &File::open("/dev/null").unwrap(), |handle| {
+            let handle = handle.clone();
             // TODO: Don't spawn separate threads for each execution?
             //       If the timeout is always the same a single thread with a FIFO queue would suffice
             //       (does it actually matter? - maybe a sleeping thread is not a problem at all)
-            // let timeout = self.timeout;
-            // thread::spawn(move || {
-            //     thread::sleep(timeout);
-            //     handle.try_kill();
-            // });
+            let timeout = self.timeout;
+            thread::spawn(move || {
+                thread::sleep(timeout);
+                handle.try_kill();
+            });
         })
     }
 }

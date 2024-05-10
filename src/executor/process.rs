@@ -1,14 +1,19 @@
-use std::ffi::CStr;
+use std::ffi::{CString, OsString};
 use std::fs::File;
-use std::os::fd::AsRawFd;
+use std::io;
+use std::mem::MaybeUninit;
+use std::os::fd::{AsRawFd};
+use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
+use std::ptr::{null_mut};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use nix::errno::Errno::ESRCH;
-use nix::libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
+use nix::libc::{c_char, c_int, pid_t, posix_spawn_file_actions_adddup2, posix_spawn_file_actions_destroy, posix_spawn_file_actions_init, posix_spawn_file_actions_t, posix_spawnattr_destroy, posix_spawnattr_init, posix_spawnattr_setflags, posix_spawnattr_t, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 use nix::sys::signal;
 use nix::sys::signal::SIGKILL;
 use nix::sys::wait::{Id, waitid, waitpid, WaitPidFlag, WaitStatus};
-use nix::unistd::{dup2, fexecve, fork, ForkResult, Pid};
+use nix::unistd::{Pid};
 use crate::test_errors::{ExecutionError, ExecutionMetrics};
 use crate::test_errors::ExecutionError::RuntimeError;
 
@@ -72,11 +77,11 @@ impl OwnedPid {
     ///
     /// The caller must guarantee that the PID has not been waited for
     /// and will not be waited for in the future
-    unsafe fn from_raw(pid: Pid) -> Self {
+    unsafe fn from_nix_pid(pid: Pid) -> Self {
         OwnedPid { handle: ProcessHandle::new(pid) }
     }
 
-    fn to_raw(&self) -> Pid {
+    fn to_nix_pid(&self) -> Pid {
         self.handle.pid.lock().unwrap().expect("handle.pid should not be None until OwnedPid drops")
     }
 }
@@ -89,6 +94,8 @@ impl Drop for OwnedPid {
             // even if another thread poisons the Mutex, we should still call waitpid
             .unwrap_or_else(|err| err.into_inner())
             .take().expect("handle.pid should not be None until OwnedPid drops");
+
+        // We only wait in the drop handler, so it's ok
         unsafe { try_kill(pid); }
 
         // `waitpid` without the `WNOWAIT` flag lets the OS clean resources of the child
@@ -97,30 +104,138 @@ impl Drop for OwnedPid {
     }
 }
 
+// Based on std::process::Command::spawn() Unix implementation:
+// https://github.com/rust-lang/rust/blob/8c7c151a7a03d92cc5c75c49aa82a658ec1fe4ff/library/std/src/sys/pal/unix/process/process_unix.rs#L446
+fn posix_spawn(executable_file_path: &Path, stdin: &File, stdout: &File, stderr: &File) -> io::Result<OwnedPid> {
+    struct PosixSpawnFileActions<'a>(&'a mut MaybeUninit<posix_spawn_file_actions_t>);
+
+    impl Drop for PosixSpawnFileActions<'_> {
+        fn drop(&mut self) {
+            unsafe {
+                posix_spawn_file_actions_destroy(self.0.as_mut_ptr());
+            }
+        }
+    }
+
+    struct PosixSpawnattr<'a>(&'a mut MaybeUninit<posix_spawnattr_t>);
+
+    impl Drop for PosixSpawnattr<'_> {
+        fn drop(&mut self) {
+            unsafe {
+                posix_spawnattr_destroy(self.0.as_mut_ptr());
+            }
+        }
+    }
+
+    // Also copied from the std implementation
+    pub fn cvt_nz(error: c_int) -> io::Result<()> {
+        if error == 0 { Ok(()) } else { Err(io::Error::from_raw_os_error(error)) }
+    }
+
+    let filename = executable_file_path.file_name().map(|e| e.to_owned()).unwrap_or(OsString::from("program"));
+    let executable_file_path = CString::new(executable_file_path.as_os_str().as_bytes()).unwrap();
+
+    unsafe {
+        let mut attrs = MaybeUninit::uninit();
+        cvt_nz(posix_spawnattr_init(attrs.as_mut_ptr()))?;
+        let attrs = PosixSpawnattr(&mut attrs);
+
+        let mut file_actions = MaybeUninit::uninit();
+        cvt_nz(posix_spawn_file_actions_init(file_actions.as_mut_ptr()))?;
+        let file_actions = PosixSpawnFileActions(&mut file_actions);
+
+        cvt_nz(posix_spawn_file_actions_adddup2(
+            file_actions.0.as_mut_ptr(),
+            stdin.as_raw_fd(),
+            STDIN_FILENO,
+        ))?;
+        cvt_nz(posix_spawn_file_actions_adddup2(
+            file_actions.0.as_mut_ptr(),
+            stdout.as_raw_fd(),
+            STDOUT_FILENO,
+        ))?;
+        cvt_nz(posix_spawn_file_actions_adddup2(
+            file_actions.0.as_mut_ptr(),
+            stderr.as_raw_fd(),
+            STDERR_FILENO,
+        ))?;
+
+        cvt_nz(posix_spawnattr_setflags(attrs.0.as_mut_ptr(), 0))?;
+
+        let mut pid: pid_t = 0;
+
+        // [Dominik]: I wrote it, it doesn't crash, but I have no idea what it does.
+        // Also, it might leak??
+        let argv: [*mut c_char; 2] = [CString::new(filename.as_bytes()).unwrap().into_raw(), null_mut()];
+        let envp: [*mut c_char; 1] = [null_mut()];
+
+        // [Dominik]: Same with this line
+        cvt_nz(nix::libc::posix_spawn(
+            &mut pid,
+            executable_file_path.as_ptr(),
+            file_actions.0.as_ptr(),
+            attrs.0.as_ptr(),
+            argv.as_ptr(),
+            envp.as_ptr(),
+        ))?;
+
+        Ok(OwnedPid::from_nix_pid(Pid::from_raw(pid)))
+    }
+}
+
+// Now that my posix_spawn() returns OwnedPid,
+// this function could be split into separate start and wait functions.
 pub(crate) fn start_and_wait(
-    executable_file: &File,
+    executable_file_path: &Path,
     stdin: &File,
     stdout: &File,
     stderr: &File,
     before_wait: impl FnOnce(&ProcessHandle)
 ) -> (ExecutionMetrics, Result<(), ExecutionError>) {
-    match unsafe { fork() } {
-        Ok(ForkResult::Parent { child: pid, .. }) => {
-            // println!("Continuing execution in parent process, new child has pid: {}", pid);
-            after_fork_parent(unsafe { OwnedPid::from_raw(pid) }, before_wait)
-        },
-        Ok(ForkResult::Child) => {
-            // Unsafe to use `println!` (or `unwrap`) here. See Safety.
-            // write(std::io::stdout().as_raw_fd(), "I'm a new child process\n".as_bytes()).ok();
-            let empty_list: &[&CStr] = &[];
-            dup2(stdin.as_raw_fd(), STDIN_FILENO).unwrap();
-            dup2(stdout.as_raw_fd(), STDOUT_FILENO).unwrap();
-            dup2(stderr.as_raw_fd(), STDERR_FILENO).unwrap();
-            fexecve(executable_file.as_raw_fd(), &empty_list, &empty_list).unwrap();
-            unreachable!();
-        }
-        Err(_) => panic!("Fork failed"),
-    }
+    // TODO: Remove unwrap
+    let pid = posix_spawn(executable_file_path, stdin, stdout, stderr).unwrap();
+    after_fork_parent(pid, before_wait)
+    // let executable_file_path = CString::new(executable_file_path.as_os_str().as_bytes()).unwrap();
+    //
+    // match unsafe { fork() } {
+    //     Ok(ForkResult::Parent { child: pid, .. }) => {
+    //         // println!("Continuing execution in parent process, new child has pid: {}", pid);
+    //         after_fork_parent(unsafe { OwnedPid::from_raw(pid) }, before_wait)
+    //     },
+    //     Ok(ForkResult::Child) => {
+    //         // Only async-signal-safe calls are available here.
+    //         // memory allocation is not async-signal-safe,
+    //         // so the calls we can do are very limited.
+    //         // See Safety section in `fork()`
+    //
+    //         trait ResultExt<T> {
+    //             fn or_exit(self) -> T;
+    //         }
+    //
+    //         impl<T, E: Sized> ResultExt<T> for Result<T, E> {
+    //             fn or_exit(self) -> T {
+    //                 self.unwrap_or_else(|_| {
+    //                     // TODO: Save error in a provided location?
+    //                     //       Would this require any IPC methods?
+    //                     // exit() is not async-signal-safe.
+    //                     // _exit() does not run clean up actions like flushing buffers,
+    //                     // but that's what we want to happen.
+    //                     unsafe { _exit(1); }
+    //                 })
+    //             }
+    //         }
+    //
+    //         // Unsafe to use `println!` (or `unwrap`) here. See Safety.
+    //         // write(std::io::stdout().as_raw_fd(), "I'm a new child process\n".as_bytes()).ok();
+    //         let empty_list: &[&CStr] = &[];
+    //         dup2(stdin.as_raw_fd(), STDIN_FILENO).or_exit();
+    //         dup2(stdout.as_raw_fd(), STDOUT_FILENO).or_exit();
+    //         dup2(stderr.as_raw_fd(), STDERR_FILENO).or_exit();
+    //         execve(&executable_file_path, &empty_list, &empty_list).or_exit();
+    //         unreachable!();
+    //     }
+    //     Err(_) => panic!("Fork failed"),
+    // }
 }
 
 /// # Safety
@@ -129,8 +244,9 @@ pub(crate) fn start_and_wait(
 unsafe fn try_kill(pid: Pid) {
     match signal::kill(pid, Some(SIGKILL)) {
         Ok(()) => {}
-        // ESRCH means the process does not exist or has terminated execution
-        // but has not been waited for.
+        // ESRCH means the process does not exist
+        // or has terminated execution but has not been waited for.
+        // This might mean it has already been killed.
         Err(ESRCH) => {}
         Err(errno) => panic!("kill syscall failed with errno {}", errno),
     }
@@ -140,7 +256,7 @@ fn after_fork_parent(pid: OwnedPid, before_wait: impl FnOnce(&ProcessHandle)) ->
     let start_time = Instant::now();
     before_wait(&pid.handle);
 
-    let wait_status = waitid(Id::Pid(pid.to_raw()), WaitPidFlag::WEXITED | WaitPidFlag::WSTOPPED | WaitPidFlag::WNOWAIT).unwrap();
+    let wait_status = waitid(Id::Pid(pid.to_nix_pid()), WaitPidFlag::WEXITED | WaitPidFlag::WSTOPPED | WaitPidFlag::WNOWAIT).unwrap();
     let result = match wait_status {
         WaitStatus::Exited(_, 0) => {
             Ok(())
