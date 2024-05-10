@@ -2,7 +2,6 @@ use std::cmp::Ordering;
 use std::time::{Duration, Instant};
 use colored::Color::{Blue, Green, Red, Yellow};
 use colored::{Color, Colorize};
-use rayon::slice::ParallelSliceMut;
 use crate::generic_utils::OptionExt;
 use crate::test_errors::{ExecutionError, ExecutionMetrics, TestError};
 use crate::test_errors::TestError::*;
@@ -155,7 +154,7 @@ impl TestSummary {
     }
 
     pub(crate) fn get_errors(&mut self) -> &Vec<(String, TestError)> {
-        self.test_errors.par_sort_by(|a, b| -> Ordering {
+        self.test_errors.sort_by(|a, b| -> Ordering {
             human_sort::compare(&a.0, &b.0)
         });
         &self.test_errors
