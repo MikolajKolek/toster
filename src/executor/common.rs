@@ -26,7 +26,15 @@ impl Watchdog {
             // The thread will be alive until the moment `Watchdog` is dropped
             // (causing the channel to hung up) plus at most `timeout_duration`.
             for WatchdogMessage { handle, timeout } in receiver.iter() {
+                // This check is important for reducing the number of times this thread is woken up.
+                // If we are executing 1000 tests per second and the timeout is 5s,
+                // then at any point there are almost 5000 tests that have finished,
+                // but have not yet timed out.
+                // This line lets the watchdog skip all these 5000 finished tests,
+                // before waiting for the first one that's still running to time out
+                // or waiting to receive a new message if the queue is empty.
                 if handle.is_useless() { continue; }
+
                 let remaining_time = timeout.checked_duration_since(Instant::now());
                 if let Some(remaining_time) = remaining_time {
                     kill_flag.wait_with_timeout(remaining_time);
@@ -40,6 +48,9 @@ impl Watchdog {
         }
     }
 
+    /// Starts the timeout for the handle.
+    ///
+    /// If `kill_flag` was raised the child will be killed almost immediately.
     pub(crate) fn add_handle(&self, handle: ChildHandle) {
         let timeout = Instant::now() + self.timeout_duration;
         self.sender.send(WatchdogMessage { handle, timeout }).unwrap();
