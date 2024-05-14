@@ -10,8 +10,9 @@ mod checker;
 mod compiler;
 mod formatted_error;
 mod owned_child;
+mod flag;
 
-use std::{fs, panic};
+use std::{fs, panic, thread};
 use std::fmt::Write as FmtWrite;
 use std::fs::File;
 use std::panic::PanicInfo;
@@ -20,6 +21,7 @@ use std::process::{exit, ExitCode};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Acquire, Release};
+use std::time::Duration;
 use clap::Parser;
 use colored::Colorize;
 use human_panic::{handle_dump, print_msg};
@@ -34,16 +36,17 @@ use crate::compiler::Compiler;
 use crate::executor::simple::SimpleExecutor;
 use crate::prepare_input::{prepare_file_inputs, Test, TestingInputs};
 use crate::executor::{AnyTestExecutor, test_to_temp, TestExecutor};
-use crate::test_errors::{ExecutionMetrics, TestError};
-use crate::test_errors::TestError::{Cancelled, ProgramError};
+use crate::test_errors::{ExecutionMetrics, MaybeCancelled, SurelyCancelled, TestError};
+use crate::test_errors::TestError::{ProgramError};
 use crate::test_summary::TestSummary;
 use crate::testing_utils::compare_output;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use crate::executor::sio2jail::Sio2jailExecutor;
+use crate::flag::Flag;
 use crate::formatted_error::FormattedError;
 use crate::generic_utils::halt;
 
-static RECEIVED_CTRL_C: AtomicBool = AtomicBool::new(false);
+static RECEIVED_CTRL_C: Flag = Flag::new();
 
 fn print_output(stopped_early: bool, test_summary: &mut Option<TestSummary>) {
 	let Some(test_summary) = test_summary else {
@@ -115,8 +118,8 @@ fn setup_panic() {
 	}
 }
 
-fn check_ctrlc() -> Result<(), TestError> {
-	if RECEIVED_CTRL_C.load(Acquire) { Err(Cancelled) }
+fn check_ctrlc() -> Result<(), SurelyCancelled> {
+	if RECEIVED_CTRL_C.was_set() { Err(SurelyCancelled) }
 	else { Ok(()) }
 }
 
@@ -139,7 +142,7 @@ fn map_tests<T>(
 	inputs: TestingInputs<T>,
 	progress_bar: ProgressBar,
 	test_summary: &Arc<Mutex<Option<TestSummary>>>,
-	callback: impl Fn(Test) -> Result<ExecutionMetrics, TestError> + Sync
+	callback: impl Fn(Test) -> Result<ExecutionMetrics, MaybeCancelled<TestError>> + Sync
 ) where T: IndexedParallelIterator<Item = Test> {
 	inputs.iterator.progress_with(progress_bar).try_for_each(|input| {
 		let test_name = input.test_name.clone();
@@ -150,8 +153,8 @@ fn map_tests<T>(
 		let test_summary = test_summary.as_mut().unwrap();
 		match result {
 			Ok(metrics) => test_summary.add_success(&metrics, &test_name),
-			Err(Cancelled) => return None,
-			Err(error) => test_summary.add_test_error(error, test_name),
+			Err(MaybeCancelled::Cancelled) => return None,
+			Err(MaybeCancelled::Finished(error)) => test_summary.add_test_error(error, test_name),
 		};
 		Some(())
 	});
@@ -174,7 +177,9 @@ fn try_main() -> Result<(), FormattedError> {
 	{
 		let test_summary = test_summary.clone();
 		ctrlc::set_handler(move || {
-			RECEIVED_CTRL_C.store(true, Release);
+			RECEIVED_CTRL_C.raise();
+			// TODO: Remove
+			thread::sleep(Duration::from_secs(20));
 			print_output(true, &mut test_summary.lock().expect("Failed to lock test summary mutex"));
 		}).expect("Error setting Ctrl-C handler");
 	}

@@ -24,7 +24,6 @@ pub enum TestError {
 		error: ExecutionError
 	},
 	NoOutputFile,
-	Cancelled,
 }
 
 #[allow(unused)]
@@ -60,10 +59,6 @@ impl TestError {
 				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
 				result.push_str(&format!("{}", "Output file does not exist".red()));
 			}
-			TestError::Cancelled => {
-				result.push_str(&format!("{}", format!("Test {}:\n", test_name).bold()));
-				result.push_str(&format!("{}", "Cancelled".yellow()));
-			}
 		}
 
 		result
@@ -81,5 +76,23 @@ impl ExecutionError {
 			ExecutionError::PipeError => "Failed to read program output".to_string(),
 			ExecutionError::OutputNotUtf8 => "The output contained invalid characters".to_string(),
 		}
+	}
+}
+
+pub(crate) enum MaybeCancelled<T> {
+	Cancelled,
+	Finished(T),
+}
+pub(crate) struct SurelyCancelled;
+
+impl<T> From<SurelyCancelled> for MaybeCancelled<T> {
+	fn from(_: SurelyCancelled) -> Self {
+		Self::Cancelled
+	}
+}
+
+impl From<TestError> for MaybeCancelled<TestError> {
+	fn from(value: TestError) -> Self {
+		MaybeCancelled::Finished(value)
 	}
 }

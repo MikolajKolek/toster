@@ -111,7 +111,6 @@ impl TestSummary {
             ProgramError { error: ExecutionError::OutputNotUtf8 } => { self.invalid_output += 1 }
             CheckerError { .. } => { self.checker_error += 1 }
             NoOutputFile { .. } => { self.no_output_file += 1 }
-            Cancelled => return,
         }
         self.processed += 1;
         self.test_errors.push((test_name, error));
