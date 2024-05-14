@@ -1,18 +1,18 @@
 use std::fs::File;
 use std::io::{read_to_string, Seek};
-use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus};
+use std::process::Command;
 use std::time::Duration;
 use colored::Colorize;
 use command_fds::{CommandFdExt, FdMapping};
 use directories::BaseDirs;
-use wait_timeout::ChildExt;
 use which::which;
+use crate::executor::common::Watchdog;
 use crate::temp_files::{create_temp_file, make_cloned_stdio};
 use crate::executor::TestExecutor;
+use crate::flag::Flag;
 use crate::formatted_error::FormattedError;
-use crate::generic_utils::halt;
+use crate::owned_child::{CommandExt, ExitStatus};
 use crate::test_errors::{ExecutionError, ExecutionMetrics};
 use crate::test_errors::ExecutionError::{MemoryLimitExceeded, RuntimeError, Sio2jailError, TimedOut};
 
@@ -21,6 +21,7 @@ pub(crate) struct Sio2jailExecutor {
     executable_path: PathBuf,
     sio2jail_path: PathBuf,
     memory_limit: u64,
+    watchdog: Watchdog,
 }
 
 struct Sio2jailOutput {
@@ -55,7 +56,7 @@ impl Sio2jailExecutor {
         let mut sio2jail_output = create_temp_file().unwrap();
         let mut stderr = create_temp_file().unwrap();
 
-        let mut child = Command::new(&self.sio2jail_path)
+        let child = Command::new(&self.sio2jail_path)
             .args(["-f", "3", "-o", "oiaug", "--mount-namespace", "off", "--pid-namespace", "off", "--uts-namespace", "off", "--ipc-namespace", "off", "--net-namespace", "off", "--capability-drop", "off", "--user-namespace", "off", "-m", &self.memory_limit.to_string(), "--", executable_path.to_str().unwrap() ])
             .fd_mappings(vec![FdMapping {
                 parent_fd: sio2jail_output.try_clone().unwrap().into(),
@@ -64,13 +65,12 @@ impl Sio2jailExecutor {
             .stdout(make_cloned_stdio(output_file))
             .stderr(make_cloned_stdio(&stderr))
             .stdin(make_cloned_stdio(input_file))
-            .spawn().expect("Failed to spawn sio2jail");
+            .spawn_owned().expect("Failed to spawn sio2jail");
 
-        let status = child.wait_timeout(self.timeout).unwrap();
-        let Some(status) = status else {
-            child.kill().unwrap();
-            return Err(TimedOut);
-        };
+        self.watchdog.add_handle(child.get_handle());
+
+        let status = child.wait().unwrap();
+        // TODO: Handle timeout
 
         sio2jail_output.rewind().unwrap();
         stderr.rewind().unwrap();
@@ -110,15 +110,28 @@ impl Sio2jailExecutor {
         Ok(())
     }
 
-    pub(crate) fn init_and_test(timeout: Duration, executable_path: PathBuf, memory_limit: u64) -> Result<Sio2jailExecutor, FormattedError> {
+    pub(crate) fn init_and_test(timeout: Duration, executable_path: PathBuf, memory_limit: u64, kill_flag: &'static Flag) -> Result<Sio2jailExecutor, FormattedError> {
         let executor = Sio2jailExecutor {
             timeout,
             memory_limit,
             executable_path,
             sio2jail_path: Self::get_sio2jail_path()?,
+            watchdog: Watchdog::start(timeout, kill_flag),
         };
         executor.test()?;
         Ok(executor)
+    }
+
+    fn map_exit_status(status: &ExitStatus) -> Result<(), ExecutionError> {
+        match status {
+            ExitStatus::ExitCode(0) => Ok(()),
+            ExitStatus::ExitCode(exit_code) => {
+                Err(RuntimeError(format!("- sio2jail returned a non-zero return code: {}", exit_code)))
+            },
+            ExitStatus::Signalled(signal) => {
+                Err(RuntimeError(format!("- sio2jail terminated due to a signal {}", signal)))
+            }
+        }
     }
 }
 
@@ -156,28 +169,15 @@ impl TestExecutor for Sio2jailExecutor {
             memory_kibibytes: Some(memory_kibibytes)
         };
 
-        match output.status.code() {
-            None => {
-                #[cfg(unix)]
-                if cfg!(unix) && output.status.signal().expect("Sio2jail returned an invalid status code") == 2 {
-                    halt();
-                }
-
-                return (metrics, Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", output.status))))
+        (metrics, Self::map_exit_status(&output.status).and_then(|_| {
+            match sio2jail_status {
+                "OK" => Ok(()),
+                "RE" | "RV" => Err(RuntimeError(error_message.map(|message| format!("- {}", message)).unwrap_or(String::new()))),
+                "TLE" => Err(TimedOut),
+                "MLE" => Err(MemoryLimitExceeded),
+                "OLE" => Err(RuntimeError("- output limit exceeded".to_string())),
+                _ => Err(Sio2jailError(format!("Sio2jail returned an invalid status in the output: {}", sio2jail_status)))
             }
-            Some(0) => {}
-            Some(exit_code) => {
-                return (metrics, Err(Sio2jailError(format!("Sio2jail returned an invalid status code: {}", exit_code))) );
-            }
-        }
-
-        (ExecutionMetrics { time: Some(time), memory_kibibytes: Some(memory_kibibytes) }, match sio2jail_status {
-            "OK" => Ok(()),
-            "RE" | "RV" => Err(RuntimeError(error_message.map(|message| format!("- {}", message)).unwrap_or(String::new()))),
-            "TLE" => Err(TimedOut),
-            "MLE" => Err(MemoryLimitExceeded),
-            "OLE" => Err(RuntimeError("- output limit exceeded".to_string())),
-            _ => Err(Sio2jailError(format!("Sio2jail returned an invalid status in the output: {}", sio2jail_status)))
-        })
+        }))
     }
 }

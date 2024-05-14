@@ -126,6 +126,7 @@ fn init_runner(executable: PathBuf, config: &ParsedConfig) -> Result<AnyTestExec
 			config.execute_timeout,
 			executable,
 			memory_limit,
+			&RECEIVED_CTRL_C,
 		)?),
 	})
 }

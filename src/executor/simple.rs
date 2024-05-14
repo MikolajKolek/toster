@@ -31,7 +31,6 @@ impl SimpleExecutor {
                 Err(RuntimeError(format!("- the program returned a non-zero return code: {}", exit_code)))
             },
             ExitStatus::Signalled(signal) => {
-                // TODO: Format signal
                 Err(RuntimeError(format!("- the program terminated due to a signal {}", signal)))
             }
         }
