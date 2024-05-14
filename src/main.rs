@@ -9,6 +9,7 @@ mod temp_files;
 mod checker;
 mod compiler;
 mod formatted_error;
+mod owned_child;
 
 use std::{fs, panic};
 use std::fmt::Write as FmtWrite;
