@@ -1,22 +1,29 @@
 use std::fs::File;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::thread;
-use std::thread::sleep;
 use std::time::{Duration, Instant};
+use crate::executor::common::Watchdog;
 use crate::test_errors::{ExecutionError, ExecutionMetrics};
 use crate::executor::TestExecutor;
+use crate::flag::Flag;
 use crate::test_errors::ExecutionError::{RuntimeError};
 
 use crate::owned_child::{CommandExt, ExitStatus};
 use crate::temp_files::make_cloned_stdio;
 
 pub(crate) struct SimpleExecutor {
-    pub(crate) timeout: Duration,
-    pub(crate) executable_path: PathBuf,
+    executable_path: PathBuf,
+    watchdog: Watchdog,
 }
 
 impl SimpleExecutor {
+    pub(crate) fn init(timeout: Duration, executable_path: PathBuf, kill_flag: &'static Flag) -> Self {
+        SimpleExecutor {
+            executable_path,
+            watchdog: Watchdog::start(timeout, kill_flag),
+        }
+    }
+
     fn map_exit_status(status: &ExitStatus) -> Result<(), ExecutionError> {
         match status {
             ExitStatus::ExitCode(0) => Ok(()),
@@ -39,15 +46,7 @@ impl TestExecutor for SimpleExecutor {
             .stderr(Stdio::null())
             .spawn_owned().expect("Failed to spawn child");
 
-        // TODO: Use a single thread for the timeout
-        {
-            let handle = child.get_handle();
-            let timeout = self.timeout.clone();
-            thread::spawn(move || {
-                sleep(timeout);
-                handle.try_kill().unwrap();
-            });
-        }
+        self.watchdog.add_handle(child.get_handle());
 
         let start_time = Instant::now();
         // TODO: Handle timeout status

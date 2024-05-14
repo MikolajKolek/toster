@@ -158,4 +158,8 @@ impl TestSummary {
         });
         &self.test_errors
     }
+
+    pub(crate) fn all_finished(&self) -> bool {
+        self.processed == self.total
+    }
 }

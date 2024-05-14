@@ -12,7 +12,7 @@ mod formatted_error;
 mod owned_child;
 mod flag;
 
-use std::{fs, panic, thread};
+use std::{fs, panic};
 use std::fmt::Write as FmtWrite;
 use std::fs::File;
 use std::panic::PanicInfo;
@@ -21,7 +21,6 @@ use std::process::{exit, ExitCode};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Acquire, Release};
-use std::time::Duration;
 use clap::Parser;
 use colored::Colorize;
 use human_panic::{handle_dump, print_msg};
@@ -48,12 +47,8 @@ use crate::generic_utils::halt;
 
 static RECEIVED_CTRL_C: Flag = Flag::new();
 
-fn print_output(stopped_early: bool, test_summary: &mut Option<TestSummary>) {
-	let Some(test_summary) = test_summary else {
-		println!("{}", "Toster was stopped before testing could start".red());
-		exit(0);
-	};
-
+fn print_output(test_summary: &mut TestSummary) {
+	let stopped_early = !test_summary.all_finished();
 	if stopped_early {
 		println!();
 	}
@@ -125,10 +120,7 @@ fn check_ctrlc() -> Result<(), SurelyCancelled> {
 
 fn init_runner(executable: PathBuf, config: &ParsedConfig) -> Result<AnyTestExecutor, FormattedError> {
 	Ok(match config.execute_mode {
-		Simple => AnyTestExecutor::Simple(SimpleExecutor {
-			executable_path: executable,
-			timeout: config.execute_timeout,
-		}),
+		Simple => AnyTestExecutor::Simple(SimpleExecutor::init(config.execute_timeout, executable, &RECEIVED_CTRL_C)),
 		#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 		Sio2jail { memory_limit } => AnyTestExecutor::Sio2Jail(Sio2jailExecutor::init_and_test(
 			config.execute_timeout,
@@ -178,9 +170,11 @@ fn try_main() -> Result<(), FormattedError> {
 		let test_summary = test_summary.clone();
 		ctrlc::set_handler(move || {
 			RECEIVED_CTRL_C.raise();
-			// TODO: Remove
-			thread::sleep(Duration::from_secs(20));
-			print_output(true, &mut test_summary.lock().expect("Failed to lock test summary mutex"));
+
+			if test_summary.lock().unwrap().is_none() {
+				println!("{}", "Toster was stopped before testing could start".red());
+				exit(0);
+			};
 		}).expect("Error setting Ctrl-C handler");
 	}
 
@@ -220,7 +214,7 @@ fn try_main() -> Result<(), FormattedError> {
 
 	let runner = init_runner(executable, &config)?;
 	let checker = checker_executable.map(|checker_executable| {
-		Checker::new(checker_executable, config.execute_timeout)
+		Checker::new(checker_executable, config.execute_timeout, &RECEIVED_CTRL_C)
 	});
 
 	// Progress bar styling
@@ -301,6 +295,6 @@ fn try_main() -> Result<(), FormattedError> {
 		}
 	}
 
-	print_output(false, &mut test_summary.lock().expect("Failed to lock test summary mutex"));
+	print_output(test_summary.lock().expect("Failed to lock test summary mutex").as_mut().unwrap());
 	Ok(())
 }
