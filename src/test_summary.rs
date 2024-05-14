@@ -6,6 +6,7 @@ use crate::generic_utils::OptionExt;
 use crate::test_errors::{ExecutionError, ExecutionMetrics, TestError};
 use crate::test_errors::TestError::*;
 
+#[derive(Debug)]
 pub(crate) struct TestSummary {
     pub(crate) generate_mode: bool,
     pub(crate) start_time: Instant,

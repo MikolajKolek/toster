@@ -18,7 +18,7 @@ use std::fs::File;
 use std::panic::PanicInfo;
 use std::path::PathBuf;
 use std::process::{exit, ExitCode};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Acquire, Release};
 use clap::Parser;
@@ -134,7 +134,7 @@ fn init_runner(executable: PathBuf, config: &ParsedConfig) -> Result<AnyTestExec
 fn map_tests<T>(
 	inputs: TestingInputs<T>,
 	progress_bar: ProgressBar,
-	test_summary: &Arc<Mutex<Option<TestSummary>>>,
+	test_summary: &Mutex<TestSummary>,
 	callback: impl Fn(Test) -> Result<ExecutionMetrics, MaybeCancelled<TestError>> + Sync
 ) where T: IndexedParallelIterator<Item = Test> {
 	inputs.iterator.progress_with(progress_bar).try_for_each(|input| {
@@ -143,7 +143,6 @@ fn map_tests<T>(
 		let result = callback(input);
 
 		let mut test_summary = test_summary.lock().expect("Failed to lock test summary mutex");
-		let test_summary = test_summary.as_mut().unwrap();
 		match result {
 			Ok(metrics) => test_summary.add_success(&metrics, &test_name),
 			Err(MaybeCancelled::Cancelled) => return None,
@@ -166,13 +165,13 @@ fn main() -> ExitCode {
 fn try_main() -> Result<(), FormattedError> {
     let config = ParsedConfig::try_from(Args::parse())
 		.map_err(|error| FormattedError::from_str(&error))?;
-	let test_summary: Arc<Mutex<Option<TestSummary>>> = Arc::new(Mutex::new(None));
+	let test_summary: Arc<OnceLock<Arc<Mutex<TestSummary>>>> = Arc::new(OnceLock::new());
 	{
 		let test_summary = test_summary.clone();
 		ctrlc::set_handler(move || {
 			RECEIVED_CTRL_C.raise();
 
-			if test_summary.lock().unwrap().is_none() {
+			if test_summary.get().is_none() {
 				println!("{}", "Toster was stopped before testing could start".red());
 				exit(0);
 			};
@@ -218,28 +217,30 @@ fn try_main() -> Result<(), FormattedError> {
 		Checker::new(checker_executable, config.execute_timeout, &RECEIVED_CTRL_C)
 	});
 
-	// Progress bar styling
-    let style: ProgressStyle = {
-        let test_summary = test_summary.clone();
-        ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{counts} {ctrlc}")
-            .expect("Progress bar creation failed")
-            .with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed"))
-            .progress_chars("#>-")
-            .with_key("counts", move |_state: &ProgressState, w: &mut dyn FmtWrite| {
-                write!(w, "{}", test_summary.lock().expect("Failed to lock test summary mutex").as_ref().unwrap().format_counts(false)).expect("Displaying the progress bar failed")
-            })
-            .with_key("ctrlc", |_state: &ProgressState, w: &mut dyn FmtWrite|
-                write!(w, "{}", "(Press Ctrl+C to stop testing and print current results)".bright_black()).expect("Displaying the progress bar Ctrl+C message failed")
-            )
-    };
-
 	let inputs = match &config.input {
 		InputConfig::Directory { directory, ext } => {
 			prepare_file_inputs(directory, ext)?
 		},
 	};
-	*test_summary.lock().expect("Failed to lock test summary mutex") = Some(TestSummary::new(config.generate_mode(), inputs.test_count));
+	let test_summary = {
+		let new_test_summary = Arc::new(Mutex::new(TestSummary::new(config.generate_mode(), inputs.test_count)));
+		test_summary.set(new_test_summary.clone()).expect("test_summary should not have been set before");
+		new_test_summary
+	};
 
+	let style: ProgressStyle = {
+		let test_summary = test_summary.clone();
+		ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{counts} {ctrlc}")
+			.expect("Progress bar creation failed")
+			.with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed"))
+			.progress_chars("#>-")
+			.with_key("counts", move |_state: &ProgressState, w: &mut dyn FmtWrite| {
+				write!(w, "{}", test_summary.lock().expect("Failed to lock test summary mutex").format_counts(false)).expect("Displaying the progress bar failed")
+			})
+			.with_key("ctrlc", |_state: &ProgressState, w: &mut dyn FmtWrite|
+				write!(w, "{}", "(Press Ctrl+C to stop testing and print current results)".bright_black()).expect("Displaying the progress bar Ctrl+C message failed")
+			)
+	};
 	let progress_bar = ProgressBar::new(inputs.test_count as u64).with_style(style);
 
 	match config.action_type {
@@ -296,6 +297,6 @@ fn try_main() -> Result<(), FormattedError> {
 		}
 	}
 
-	print_output(test_summary.lock().expect("Failed to lock test summary mutex").as_mut().unwrap());
+	print_output(&mut test_summary.lock().expect("Failed to lock test summary mutex"));
 	Ok(())
 }

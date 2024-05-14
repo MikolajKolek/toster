@@ -13,6 +13,7 @@ impl ExecutionMetrics {
 	pub const NONE: ExecutionMetrics = ExecutionMetrics { memory_kibibytes: None, time: None };
 }
 
+#[derive(Debug)]
 pub enum TestError {
 	Incorrect {
 		error: String
