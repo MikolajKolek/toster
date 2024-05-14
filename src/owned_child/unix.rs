@@ -9,15 +9,15 @@ use nix::sys::wait::{Id, waitid, waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
 use crate::owned_child::ExitStatus;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(super) struct ChildHandle {
-    pid: Arc<Mutex<Option<Pid>>>,
+    pid: Mutex<Option<Pid>>,
 }
 
 impl ChildHandle {
     fn new(pid: Pid) -> Self {
         ChildHandle {
-            pid: Arc::new(Mutex::new(Some(pid))),
+            pid: Mutex::new(Some(pid)),
         }
     }
 
@@ -49,7 +49,7 @@ impl ChildHandle {
 }
 
 pub(super) struct OwnedChild {
-    handle: ChildHandle,
+    handle: Arc<ChildHandle>,
 }
 
 impl OwnedChild {
@@ -58,7 +58,7 @@ impl OwnedChild {
     /// The caller must guarantee that the PID has not been waited for
     /// and will not be waited for in the future
     unsafe fn from_nix_pid(pid: Pid) -> Self {
-        OwnedChild { handle: ChildHandle::new(pid) }
+        OwnedChild { handle: Arc::new(ChildHandle::new(pid)) }
     }
 
     fn to_nix_pid(&self) -> Pid {
@@ -86,8 +86,8 @@ impl OwnedChild {
         })
     }
 
-    pub(super) fn get_handle(&self) -> ChildHandle {
-        self.handle.clone()
+    pub(super) fn get_handle_arc(&self) -> &Arc<ChildHandle> {
+        &self.handle
     }
 }
 

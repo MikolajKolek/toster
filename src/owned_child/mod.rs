@@ -3,6 +3,7 @@ mod unix;
 use std::error::Error;
 use std::io;
 use std::process::Command;
+use std::sync::Arc;
 use static_assertions::assert_impl_all;
 #[cfg(unix)]
 use unix as imp;
@@ -18,7 +19,7 @@ pub(crate) enum ExitStatus {
 /// so it can be shared between threads.
 #[derive(Clone)]
 pub(crate) struct ChildHandle {
-    inner: imp::ChildHandle,
+    inner: Arc<imp::ChildHandle>,
 }
 assert_impl_all!(ChildHandle: Sync, Send);
 
@@ -52,7 +53,7 @@ impl OwnedChild {
     }
 
     pub(crate) fn get_handle(&self) -> ChildHandle {
-        ChildHandle { inner: self.inner.get_handle() }
+        ChildHandle { inner: self.inner.get_handle_arc().clone() }
     }
 }
 assert_impl_all!(ChildHandle: Sync, Send);
