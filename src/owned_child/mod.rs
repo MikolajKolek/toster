@@ -8,7 +8,8 @@ use static_assertions::assert_impl_all;
 use unix as imp;
 
 pub(crate) enum ExitStatus {
-    ExitCode(u8),
+    ExitCode(i32),
+    Signalled(&'static str),
 }
 
 /// ChildHandle is used to kill a child process from another thread.
@@ -28,7 +29,7 @@ impl ChildHandle {
     ///
     /// Can be called and does **not** block if `OwnedChild::wait_for_status`
     /// is blocking another thread.
-    fn try_kill(self) -> Result<(), impl Error> {
+    pub(crate) fn try_kill(self) -> Result<(), impl Error> {
         self.inner.try_kill()
     }
 }

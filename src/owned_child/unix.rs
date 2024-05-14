@@ -5,7 +5,7 @@ use nix::errno::Errno::ESRCH;
 use nix::libc::pid_t;
 use nix::sys::signal;
 use nix::sys::signal::SIGKILL;
-use nix::sys::wait::waitpid;
+use nix::sys::wait::{Id, waitid, waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
 use crate::owned_child::ExitStatus;
 
@@ -75,7 +75,15 @@ impl OwnedChild {
     }
 
     pub(super) fn wait(self) -> io::Result<ExitStatus> {
-        todo!();
+        let wait_status = waitid(
+            Id::Pid(self.to_nix_pid()),
+            WaitPidFlag::WEXITED | WaitPidFlag::WSTOPPED | WaitPidFlag::WNOWAIT
+        )?;
+        Ok(match wait_status {
+            WaitStatus::Exited(_, exit_code) => ExitStatus::ExitCode(exit_code),
+            WaitStatus::Signaled(_, signal, _) => ExitStatus::Signalled(signal.as_str()),
+            other => panic!("Received unexpected exit status when waiting for child: {:?}", other)
+        })
     }
 
     pub(super) fn get_handle(&self) -> ChildHandle {
