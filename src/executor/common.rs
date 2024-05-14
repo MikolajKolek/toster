@@ -23,9 +23,11 @@ impl Watchdog {
     pub(crate) fn start(timeout_duration: Duration, kill_flag: &'static Flag) -> Self {
         let (sender, receiver) = channel::<WatchdogMessage>();
         thread::spawn(move || {
+            // The thread will be alive until the moment `Watchdog` is dropped
+            // (causing the channel to hung up) plus at most `timeout_duration`.
             for WatchdogMessage { handle, timeout } in receiver.iter() {
+                if handle.is_useless() { continue; }
                 let remaining_time = timeout.checked_duration_since(Instant::now());
-                // TODO: Skip if already known to be terminated to avoid waking up the thread unnecessarily
                 if let Some(remaining_time) = remaining_time {
                     kill_flag.wait_with_timeout(remaining_time);
                 }
@@ -40,8 +42,6 @@ impl Watchdog {
 
     pub(crate) fn add_handle(&self, handle: ChildHandle) {
         let timeout = Instant::now() + self.timeout_duration;
-        // TODO: Check if already terminated?
-        // TODO: Check if kill flag was set?
         self.sender.send(WatchdogMessage { handle, timeout }).unwrap();
     }
 }

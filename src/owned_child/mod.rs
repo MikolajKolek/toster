@@ -33,6 +33,15 @@ impl ChildHandle {
     pub(crate) fn try_kill(self) -> Result<(), impl Error> {
         self.inner.try_kill()
     }
+
+    /// Returns `true` if the process has already finished execution,
+    /// either exiting normally or after being killed.
+    ///
+    /// A return value of `false` does **not** however mean that the
+    /// process is still running.
+    pub(crate) fn is_useless(&self) -> bool {
+        self.inner.is_useless()
+    }
 }
 
 // TODO: Change description to fit all supported targets

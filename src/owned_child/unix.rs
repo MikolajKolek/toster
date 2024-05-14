@@ -1,6 +1,8 @@
 use std::io;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::Relaxed;
 use nix::errno::Errno::ESRCH;
 use nix::libc::pid_t;
 use nix::sys::signal;
@@ -12,40 +14,34 @@ use crate::owned_child::ExitStatus;
 #[derive(Debug)]
 pub(super) struct ChildHandle {
     pid: Mutex<Option<Pid>>,
+    terminated: AtomicBool,
 }
 
 impl ChildHandle {
     fn new(pid: Pid) -> Self {
         ChildHandle {
             pid: Mutex::new(Some(pid)),
+            terminated: AtomicBool::new(false),
         }
     }
 
     pub(super) fn try_kill(&self) -> nix::Result<()> {
+        if self.is_useless() { return Ok(()); }
         let pid = self.pid.lock().unwrap();
         if let Some(pid) = *pid {
             // While we hold the lock and the inner value is not None
             // the process has not been waited for yet
             unsafe { try_kill(pid)? }
+            self.terminated.store(true, Relaxed);
         }
         // Ensure that the Mutex is still locked while calling `try_kill`
         drop(pid);
         Ok(())
     }
 
-    // /// If `may_be_running` returns `false` then the child process has exited
-    // /// and this handle is now useless.
-    // ///
-    // /// A return value of `true` does **not** however guarantee
-    // /// that the child process is still running - it might have just exited.
-    // ///
-    // /// This function does not block, even when the inner Mutex is locked.
-    // pub(super) fn may_be_running(&self) -> bool {
-    //     match self.pid.try_lock() {
-    //         Err(_) => true,
-    //         Ok(value) => value.is_some(),
-    //     }
-    // }
+    pub(super) fn is_useless(&self) -> bool {
+        self.terminated.load(Relaxed)
+    }
 }
 
 pub(super) struct OwnedChild {
@@ -79,11 +75,13 @@ impl OwnedChild {
             Id::Pid(self.to_nix_pid()),
             WaitPidFlag::WEXITED | WaitPidFlag::WSTOPPED | WaitPidFlag::WNOWAIT
         )?;
-        Ok(match wait_status {
+        let result = match wait_status {
             WaitStatus::Exited(_, exit_code) => ExitStatus::ExitCode(exit_code),
             WaitStatus::Signaled(_, signal, _) => ExitStatus::Signalled(signal.as_str()),
             other => panic!("Received unexpected exit status when waiting for child: {:?}", other)
-        })
+        };
+        self.handle.terminated.store(true, Relaxed);
+        Ok(result)
     }
 
     pub(super) fn get_handle_arc(&self) -> &Arc<ChildHandle> {
@@ -102,6 +100,7 @@ impl Drop for OwnedChild {
 
         // We only wait in the drop handler, so it's safe
         unsafe { try_kill(pid) }.unwrap();
+        self.handle.terminated.store(true, Relaxed);
 
         // `waitpid` without the `WNOWAIT` flag lets the OS clean resources of the child
         // and lets the PID by reused by another process.
