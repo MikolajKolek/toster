@@ -1,3 +1,12 @@
+#![warn(clippy::pedantic)]
+#![warn(clippy::if_then_some_else_none)]
+#![warn(clippy::infinite_loop)]
+#![warn(clippy::multiple_unsafe_ops_per_block)]
+#![warn(clippy::undocumented_unsafe_blocks)]
+#![warn(clippy::self_named_module_files)]
+#![warn(clippy::str_to_string)]
+#![warn(clippy::string_to_string)]
+
 mod args;
 mod test_errors;
 mod testing_utils;
