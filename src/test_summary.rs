@@ -6,6 +6,7 @@ use crate::generic_utils::OptionExt;
 use crate::test_errors::{ExecutionError, ExecutionMetrics, TestError};
 use crate::test_errors::TestError::*;
 
+#[derive(Debug)]
 pub(crate) struct TestSummary {
     pub(crate) generate_mode: bool,
     pub(crate) start_time: Instant,
@@ -111,7 +112,6 @@ impl TestSummary {
             ProgramError { error: ExecutionError::OutputNotUtf8 } => { self.invalid_output += 1 }
             CheckerError { .. } => { self.checker_error += 1 }
             NoOutputFile { .. } => { self.no_output_file += 1 }
-            Cancelled => return,
         }
         self.processed += 1;
         self.test_errors.push((test_name, error));
@@ -158,5 +158,9 @@ impl TestSummary {
             human_sort::compare(&a.0, &b.0)
         });
         &self.test_errors
+    }
+
+    pub(crate) fn all_finished(&self) -> bool {
+        self.processed == self.total
     }
 }

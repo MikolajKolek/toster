@@ -1,53 +1,37 @@
 use std::fs::File;
 use std::path::PathBuf;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+use crate::executor::common::Watchdog;
 use crate::test_errors::{ExecutionError, ExecutionMetrics};
-use wait_timeout::ChildExt;
 use crate::executor::TestExecutor;
-use crate::test_errors::ExecutionError::{RuntimeError, TimedOut};
+use crate::flag::Flag;
+use crate::test_errors::ExecutionError::{RuntimeError};
 
-#[cfg(unix)]
-use crate::generic_utils::halt;
-#[cfg(unix)]
-use std::os::unix::process::ExitStatusExt;
+use crate::owned_child::{CommandExt, ExitStatus};
 use crate::temp_files::make_cloned_stdio;
 
 pub(crate) struct SimpleExecutor {
-    pub(crate) timeout: Duration,
-    pub(crate) executable_path: PathBuf,
+    executable_path: PathBuf,
+    watchdog: Watchdog,
 }
 
 impl SimpleExecutor {
-    fn map_status_code(status: &ExitStatus) -> Result<(), ExecutionError> {
-        match status.code() {
-            Some(0) => Ok(()),
-            Some(exit_code) => {
-                Err(RuntimeError(format!("- the program returned a non-zero return code: {}", exit_code)))
-            },
-            None => {
-                #[cfg(unix)]
-                if status.signal().expect("The program returned an invalid status code") == 2 {
-                    halt();
-                }
-
-                Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", status)))
-            }
+    pub(crate) fn init(timeout: Duration, executable_path: PathBuf, kill_flag: &'static Flag) -> Self {
+        SimpleExecutor {
+            executable_path,
+            watchdog: Watchdog::start(timeout, kill_flag),
         }
     }
 
-    fn wait_for_child(&self, mut child: Child) -> (ExecutionMetrics, Result<(), ExecutionError>) {
-        let start_time = Instant::now();
-        let status = child.wait_timeout(self.timeout).unwrap();
-
+    fn map_exit_status(status: &ExitStatus) -> Result<(), ExecutionError> {
         match status {
-            Some(status) => (
-                ExecutionMetrics { time: Some(start_time.elapsed()), memory_kibibytes: None },
-                SimpleExecutor::map_status_code(&status)
-            ),
-            None => {
-                child.kill().unwrap();
-                (ExecutionMetrics { time: Some(self.timeout), memory_kibibytes: None }, Err(TimedOut))
+            ExitStatus::ExitCode(0) => Ok(()),
+            ExitStatus::ExitCode(exit_code) => {
+                Err(RuntimeError(format!("- the program returned a non-zero return code: {}", exit_code)))
+            },
+            ExitStatus::Signalled(signal) => {
+                Err(RuntimeError(format!("- the program terminated due to a signal {}", signal)))
             }
         }
     }
@@ -59,8 +43,16 @@ impl TestExecutor for SimpleExecutor {
             .stdin(make_cloned_stdio(input_file))
             .stdout(make_cloned_stdio(output_file))
             .stderr(Stdio::null())
-            .spawn().expect("Failed to spawn child");
+            .spawn_owned().expect("Failed to spawn child");
 
-        self.wait_for_child(child)
+        self.watchdog.add_handle(child.get_handle());
+
+        let start_time = Instant::now();
+        // TODO: Handle timeout status
+        let status = child.wait().unwrap();
+        (
+            ExecutionMetrics { time: Some(start_time.elapsed()), memory_kibibytes: None },
+            SimpleExecutor::map_exit_status(&status),
+        )
     }
 }
