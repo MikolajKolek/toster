@@ -1,15 +1,16 @@
-mod unix;
+#[cfg_attr(unix, path = "unix.rs")]
+#[cfg_attr(windows, path = "windows.rs")]
+mod imp;
 
 use std::error::Error;
 use std::io;
 use std::process::Command;
 use std::sync::Arc;
 use static_assertions::assert_impl_all;
-#[cfg(unix)]
-use unix as imp;
 
 pub(crate) enum ExitStatus {
     ExitCode(i32),
+    #[allow(unused)] // On Windows the process always terminates with an exit code.
     Signalled(&'static str),
 }
 
@@ -44,14 +45,13 @@ impl ChildHandle {
     }
 }
 
-// TODO: Change description to fit all supported targets
-/// Kills and waits for the inner PID on drop,
-/// to release resources and let the PID be reused by another process
+/// Kills the process and releases resources on drop.
 ///
-/// The PID is guaranteed to be valid while the instance of this struct is in scope
+/// On Unix this is done by calling the `waitid` syscall on drop - the PID is guaranteed
+/// to be valid while the instance of this struct is in scope.
 ///
-/// This struct is necessary in order for the child process to be waited for
-/// when a panic causes unwinding
+/// This struct is necessary in order for the resources consumed by the child process to be released
+/// when a panic causes unwinding.
 pub(crate) struct OwnedChild {
     inner: imp::OwnedChild,
 }

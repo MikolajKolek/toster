@@ -44,6 +44,7 @@ impl ChildHandle {
     }
 }
 
+#[derive(Debug)]
 pub(super) struct OwnedChild {
     handle: Arc<ChildHandle>,
 }
