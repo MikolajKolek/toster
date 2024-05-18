@@ -27,7 +27,7 @@ pub(crate) fn compare_output(expected_output_path: &Path, actual_output: impl Re
 fn split_trim_end(to_split: &str) -> Vec<&str> {
     let mut res = to_split
         .split('\n')
-        .map(|line| line.trim_end())
+        .map(str::trim_end)
         .collect::<Vec<&str>>();
 
     while res.last().is_some_and(|last| last.trim().is_empty()) {

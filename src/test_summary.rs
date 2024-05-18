@@ -4,7 +4,7 @@ use colored::Color::{Blue, Green, Red, Yellow};
 use colored::{Color, Colorize};
 use crate::generic_utils::OptionExt;
 use crate::test_errors::{ExecutionError, ExecutionMetrics, TestError};
-use crate::test_errors::TestError::*;
+use crate::test_errors::TestError::{Cancelled, CheckerError, Incorrect, NoOutputFile, ProgramError};
 
 pub(crate) struct TestSummary {
     pub(crate) generate_mode: bool,

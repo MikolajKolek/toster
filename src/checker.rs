@@ -44,7 +44,7 @@ impl Checker {
     /// Creates a new temporary file for the checker input and writes the program input to it.
     /// The cursor is left at the end (not rewound).
     ///
-    /// The program output should be appended to this file before calling check() on it,
+    /// The program output should be appended to this file before calling `check()` on it,
     /// which can be done by passing the file as stdin to the tested program.
     pub(crate) fn prepare_checker_input(input_source: &TestInputSource) -> File {
         let mut input_memfile = create_temp_file().unwrap();

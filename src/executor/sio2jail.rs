@@ -167,17 +167,17 @@ impl TestExecutor for Sio2jailExecutor {
             }
             Some(0) => {}
             Some(exit_code) => {
-                return (metrics, Err(Sio2jailError(format!("Sio2jail returned an invalid status code: {}", exit_code))));
+                return (metrics, Err(Sio2jailError(format!("Sio2jail returned an invalid status code: {exit_code}"))));
             }
         }
 
         (ExecutionMetrics { time: Some(time), memory_kibibytes: Some(memory_kibibytes) }, match sio2jail_status {
             "OK" => Ok(()),
-            "RE" | "RV" => Err(RuntimeError(error_message.map(|message| format!("- {}", message)).unwrap_or(String::new()))),
+            "RE" | "RV" => Err(RuntimeError(error_message.map_or(String::new(), |message| format!("- {message}")))),
             "TLE" => Err(TimedOut),
             "MLE" => Err(MemoryLimitExceeded),
             "OLE" => Err(RuntimeError("- output limit exceeded".to_string())),
-            _ => Err(Sio2jailError(format!("Sio2jail returned an invalid status in the output: {}", sio2jail_status)))
+            _ => Err(Sio2jailError(format!("Sio2jail returned an invalid status in the output: {sio2jail_status}")))
         })
     }
 }

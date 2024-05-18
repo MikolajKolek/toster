@@ -36,7 +36,7 @@ use rayon::prelude::*;
 use tempfile::tempdir;
 use args::Args;
 use crate::args::{ActionType, InputConfig, ParsedConfig};
-use crate::args::ExecuteMode::*;
+use crate::args::ExecuteMode;
 use crate::checker::Checker;
 use crate::compiler::Compiler;
 use crate::executor::simple::SimpleExecutor;
@@ -64,14 +64,13 @@ fn print_output(stopped_early: bool, test_summary: &mut Option<TestSummary>) {
     }
 
     let additional_info = match (&test_summary.slowest_test, &test_summary.most_memory_used) {
-        (None, None) => "".to_string(),
+        (None, None) => String::new(),
         (Some((duration, slowest_test_name)), None) => format!(
             " (Slowest test: {} at {:.3}s)",
             slowest_test_name, duration.as_secs_f32(),
         ),
         (None, Some((memory, most_memory_test_name))) => format!(
-            " (Most memory used: {} at {:.3}KiB)",
-            most_memory_test_name, memory,
+            " (Most memory used: {most_memory_test_name} at {memory:.3}KiB)",
         ),
         (Some((duration, slowest_test_name)), Some((memory, most_memory_test_name))) => format!(
             " (Slowest test: {} at {:.3}s, most memory used: {} at {}KiB)",
@@ -93,7 +92,7 @@ fn print_output(stopped_early: bool, test_summary: &mut Option<TestSummary>) {
     if !incorrect_results.is_empty() {
         println!("Errors were found in the following tests:");
 
-        for (test_name, error) in incorrect_results.iter() {
+        for (test_name, error) in incorrect_results {
             println!("{}", error.to_string(test_name));
         }
     }
@@ -129,12 +128,12 @@ fn check_ctrlc() -> Result<(), TestError> {
 
 fn init_runner(executable: PathBuf, config: &ParsedConfig) -> Result<AnyTestExecutor, FormattedError> {
     Ok(match config.execute_mode {
-        Simple => AnyTestExecutor::Simple(SimpleExecutor {
+        ExecuteMode::Simple => AnyTestExecutor::Simple(SimpleExecutor {
             executable_path: executable,
             timeout: config.execute_timeout,
         }),
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-        Sio2jail { memory_limit } => AnyTestExecutor::Sio2Jail(Sio2jailExecutor::init_and_test(
+        ExecuteMode::Sio2jail { memory_limit } => AnyTestExecutor::Sio2Jail(Sio2jailExecutor::init_and_test(
             config.execute_timeout,
             executable,
             memory_limit,
@@ -168,7 +167,7 @@ fn main() -> ExitCode {
     setup_panic();
 
     if let Err(error) = try_main() {
-        println!("{}", error);
+        println!("{error}");
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
@@ -233,11 +232,11 @@ fn try_main() -> Result<(), FormattedError> {
             .with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed"))
             .progress_chars("#>-")
             .with_key("counts", move |_state: &ProgressState, w: &mut dyn FmtWrite| {
-                write!(w, "{}", test_summary.lock().expect("Failed to lock test summary mutex").as_ref().unwrap().format_counts(false)).expect("Displaying the progress bar failed")
+                write!(w, "{}", test_summary.lock().expect("Failed to lock test summary mutex").as_ref().unwrap().format_counts(false)).expect("Displaying the progress bar failed");
             })
-            .with_key("ctrlc", |_state: &ProgressState, w: &mut dyn FmtWrite|
-                write!(w, "{}", "(Press Ctrl+C to stop testing and print current results)".bright_black()).expect("Displaying the progress bar Ctrl+C message failed"),
-            )
+            .with_key("ctrlc", |_state: &ProgressState, w: &mut dyn FmtWrite| {
+                write!(w, "{}", "(Press Ctrl+C to stop testing and print current results)".bright_black()).expect("Displaying the progress bar Ctrl+C message failed");
+            })
     };
 
     let inputs = match &config.input {
@@ -299,7 +298,7 @@ fn try_main() -> Result<(), FormattedError> {
                 check_ctrlc()?;
 
                 Ok(metrics)
-            })
+            });
         }
     }
 

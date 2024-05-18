@@ -3,6 +3,7 @@ use std::time::Duration;
 use clap::Parser;
 use crate::args::ExecuteMode::{Simple};
 
+#[allow(clippy::doc_markdown)] // Documentation comments have special meaning when deriving `clap::Parser`
 #[derive(Parser, Debug)]
 #[command(
     name = "Toster", version, about = "A simple-as-toast tester for C++ solutions to competitive programming exercises\nReport issues on the bugtracker at https://github.com/MikolajKolek/toster/issues", long_about = None
@@ -132,19 +133,16 @@ impl TryFrom<Args> for ParsedConfig {
             return Err("The provided file does not exist".to_string());
         }
 
-        let (input_directory, output_directory) = match args.io {
-            Some(io) => {
-                if !io.is_dir() {
-                    return Err("The input/output directory does not exist".to_string());
-                }
-                (io.clone(), io)
+        let (input_directory, output_directory) = if let Some(io) = args.io {
+            if !io.is_dir() {
+                return Err("The input/output directory does not exist".to_string());
             }
-            None => {
-                if !args.r#in.is_dir() {
-                    return Err("The input directory does not exist".to_string());
-                }
-                (args.r#in, args.out)
+            (io.clone(), io)
+        } else {
+            if !args.r#in.is_dir() {
+                return Err("The input directory does not exist".to_string());
             }
+            (args.r#in, args.out)
         };
 
         verify_compile_command(&args.compile_command)?;

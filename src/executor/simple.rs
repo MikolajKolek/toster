@@ -23,7 +23,7 @@ impl SimpleExecutor {
         match status.code() {
             Some(0) => Ok(()),
             Some(exit_code) => {
-                Err(RuntimeError(format!("- the program returned a non-zero return code: {}", exit_code)))
+                Err(RuntimeError(format!("- the program returned a non-zero return code: {exit_code}")))
             }
             None => {
                 #[cfg(unix)]
@@ -31,7 +31,7 @@ impl SimpleExecutor {
                     halt();
                 }
 
-                Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", status)))
+                Err(RuntimeError(format!("- the process was terminated with the following error:\n{status}")))
             }
         }
     }
@@ -40,15 +40,12 @@ impl SimpleExecutor {
         let start_time = Instant::now();
         let status = child.wait_timeout(self.timeout).unwrap();
 
-        match status {
-            Some(status) => (
-                ExecutionMetrics { time: Some(start_time.elapsed()), memory_kibibytes: None },
-                SimpleExecutor::map_status_code(&status)
-            ),
-            None => {
-                child.kill().unwrap();
-                (ExecutionMetrics { time: Some(self.timeout), memory_kibibytes: None }, Err(TimedOut))
-            }
+        if let Some(status) = status { (
+            ExecutionMetrics { time: Some(start_time.elapsed()), memory_kibibytes: None },
+            SimpleExecutor::map_status_code(&status)
+        ) } else {
+            child.kill().unwrap();
+            (ExecutionMetrics { time: Some(self.timeout), memory_kibibytes: None }, Err(TimedOut))
         }
     }
 }
