@@ -56,10 +56,10 @@ impl Sio2jailExecutor {
         let mut stderr = create_temp_file().unwrap();
 
         let mut child = Command::new(&self.sio2jail_path)
-            .args(["-f", "3", "-o", "oiaug", "--mount-namespace", "off", "--pid-namespace", "off", "--uts-namespace", "off", "--ipc-namespace", "off", "--net-namespace", "off", "--capability-drop", "off", "--user-namespace", "off", "-m", &self.memory_limit.to_string(), "--", executable_path.to_str().unwrap() ])
+            .args(["-f", "3", "-o", "oiaug", "--mount-namespace", "off", "--pid-namespace", "off", "--uts-namespace", "off", "--ipc-namespace", "off", "--net-namespace", "off", "--capability-drop", "off", "--user-namespace", "off", "-m", &self.memory_limit.to_string(), "--", executable_path.to_str().unwrap()])
             .fd_mappings(vec![FdMapping {
                 parent_fd: sio2jail_output.try_clone().unwrap().into(),
-                child_fd: 3
+                child_fd: 3,
             }]).expect("Failed to redirect file descriptor 3")
             .stdout(make_cloned_stdio(output_file))
             .stderr(make_cloned_stdio(&stderr))
@@ -139,7 +139,7 @@ impl TestExecutor for Sio2jailExecutor {
                 (ExecutionMetrics { time: None, memory_kibibytes: Some(self.memory_limit) }, Err(MemoryLimitExceeded))
             } else {
                 (ExecutionMetrics::NONE, Err(Sio2jailError(output.stderr)))
-            }
+            };
         }
 
         let split: Vec<&str> = output.sio2jail_output.split_whitespace().collect();
@@ -153,7 +153,7 @@ impl TestExecutor for Sio2jailExecutor {
 
         let metrics = ExecutionMetrics {
             time: Some(time),
-            memory_kibibytes: Some(memory_kibibytes)
+            memory_kibibytes: Some(memory_kibibytes),
         };
 
         match output.status.code() {
@@ -163,11 +163,11 @@ impl TestExecutor for Sio2jailExecutor {
                     halt();
                 }
 
-                return (metrics, Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", output.status))))
+                return (metrics, Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", output.status))));
             }
             Some(0) => {}
             Some(exit_code) => {
-                return (metrics, Err(Sio2jailError(format!("Sio2jail returned an invalid status code: {}", exit_code))) );
+                return (metrics, Err(Sio2jailError(format!("Sio2jail returned an invalid status code: {}", exit_code))));
             }
         }
 

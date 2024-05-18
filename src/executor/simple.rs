@@ -24,7 +24,7 @@ impl SimpleExecutor {
             Some(0) => Ok(()),
             Some(exit_code) => {
                 Err(RuntimeError(format!("- the program returned a non-zero return code: {}", exit_code)))
-            },
+            }
             None => {
                 #[cfg(unix)]
                 if status.signal().expect("The program returned an invalid status code") == 2 {

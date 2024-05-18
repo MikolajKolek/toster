@@ -29,7 +29,7 @@ impl CompilerError {
                     ).red(),
                     error
                 )
-            },
+            }
             CompilationError(error) => {
                 format!(
                     "{}\n{}",
@@ -73,8 +73,8 @@ impl<'a> Compiler<'a> {
 
         let mut child = match child {
             Ok(child) => child,
-            Err(error) if error.kind() == NotFound => { return Err("The compiler was not found".to_string()) }
-            Err(error) => { return Err(error.to_string()) }
+            Err(error) if error.kind() == NotFound => { return Err("The compiler was not found".to_string()); }
+            Err(error) => { return Err(error.to_string()); }
         };
         let result = child.wait_timeout(self.compile_timeout).unwrap();
 

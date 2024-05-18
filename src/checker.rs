@@ -13,7 +13,7 @@ use crate::test_errors::ExecutionError::IncorrectCheckerFormat;
 use crate::test_errors::TestError::CheckerError;
 
 pub(crate) struct Checker {
-    executor: SimpleExecutor
+    executor: SimpleExecutor,
 }
 
 impl Checker {

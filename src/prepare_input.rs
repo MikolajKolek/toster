@@ -11,7 +11,7 @@ pub(crate) enum TestInputSource {
 impl TestInputSource {
     pub(crate) fn get_file(&self) -> File {
         match self {
-            TestInputSource::File(path) => { File::open(path).expect("Failed to open input file") },
+            TestInputSource::File(path) => { File::open(path).expect("Failed to open input file") }
         }
     }
 }
@@ -21,7 +21,7 @@ pub(crate) struct Test {
     pub(crate) input_source: TestInputSource,
 }
 
-pub(crate) struct TestingInputs<T: IndexedParallelIterator<Item = Test>> {
+pub(crate) struct TestingInputs<T: IndexedParallelIterator<Item=Test>> {
     pub(crate) test_count: usize,
     pub(crate) iterator: T,
 }
@@ -42,7 +42,7 @@ pub(crate) fn prepare_file_inputs(input_dir: &Path, in_ext: &str) -> Result<Test
             let test_name = file_path.file_stem().unwrap_or_else(|| panic!("The input file {} is invalid", file_path.display())).to_str().unwrap_or_else(|| panic!("The input file {} is invalid", file_path.display())).to_string();
             Test {
                 test_name,
-                input_source: TestInputSource::File(file_path)
+                input_source: TestInputSource::File(file_path),
             }
         })
         .collect();

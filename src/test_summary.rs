@@ -43,7 +43,7 @@ impl<'a> CountPart<'a> {
             count,
             singular: text,
             plural: text,
-            color: Red
+            color: Red,
         }
     }
 
