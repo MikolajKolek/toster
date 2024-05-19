@@ -1,3 +1,5 @@
+use std::fmt;
+use std::fmt::{Display, Formatter};
 use std::time::Duration;
 use colored::Colorize;
 
@@ -70,16 +72,16 @@ impl TestError {
     }
 }
 
-impl ExecutionError {
-    pub fn to_string(&self) -> String {
+impl Display for ExecutionError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            ExecutionError::TimedOut => "Timed out".to_string(),
-            ExecutionError::MemoryLimitExceeded => "Memory limit exceeded".to_string(),
-            ExecutionError::RuntimeError(error) => format!("Runtime error {error}"),
-            ExecutionError::Sio2jailError(error) => format!("Sio2jail error: {error}"),
-            ExecutionError::IncorrectCheckerFormat(error) => format!("The checker output didn't follow the Toster checker format - {error}"),
-            ExecutionError::PipeError => "Failed to read program output".to_string(),
-            ExecutionError::OutputNotUtf8 => "The output contained invalid characters".to_string(),
+            ExecutionError::TimedOut => write!(f, "Timed out"),
+            ExecutionError::MemoryLimitExceeded => write!(f, "Memory limit exceeded"),
+            ExecutionError::RuntimeError(error) => write!(f, "Runtime error {error}"),
+            ExecutionError::Sio2jailError(error) => write!(f, "Sio2jail error: {error}"),
+            ExecutionError::IncorrectCheckerFormat(error) => write!(f, "The checker output didn't follow the Toster checker format - {error}"),
+            ExecutionError::PipeError => write!(f, "Failed to read program output"),
+            ExecutionError::OutputNotUtf8 => write!(f, "The output contained invalid characters"),
         }
     }
 }

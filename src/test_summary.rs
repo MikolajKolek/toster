@@ -106,10 +106,8 @@ impl TestSummary {
             ProgramError { error: ExecutionError::MemoryLimitExceeded, .. } => { self.memory_limit_exceeded += 1 }
             ProgramError { error: ExecutionError::RuntimeError(_), .. } => { self.runtime_error += 1 }
             ProgramError { error: ExecutionError::Sio2jailError(_), .. } => { self.sio2jail_error += 1 }
-            ProgramError { error: ExecutionError::IncorrectCheckerFormat(_), .. } => { self.checker_error += 1 }
-            ProgramError { error: ExecutionError::PipeError } => { self.invalid_output += 1 }
-            ProgramError { error: ExecutionError::OutputNotUtf8 } => { self.invalid_output += 1 }
-            CheckerError { .. } => { self.checker_error += 1 }
+            ProgramError { error: ExecutionError::PipeError | ExecutionError::OutputNotUtf8 } => { self.invalid_output += 1 }
+            ProgramError { error: ExecutionError::IncorrectCheckerFormat(_), .. } | CheckerError { .. } => { self.checker_error += 1 }
             NoOutputFile { .. } => { self.no_output_file += 1 }
             Cancelled => return,
         }
@@ -120,13 +118,13 @@ impl TestSummary {
     fn add_metrics(&mut self, metrics: &ExecutionMetrics, test_name: &str) {
         if let Some(new_time) = &metrics.time {
             if self.slowest_test.is_none_or(|(time, _)| new_time > time) {
-                self.slowest_test = Some((*new_time, test_name.to_string()));
+                self.slowest_test = Some((*new_time, test_name.to_owned()));
             }
         }
 
         if let Some(new_memory) = &metrics.memory_kibibytes {
             if self.most_memory_used.is_none_or(|(memory, _)| new_memory > memory) {
-                self.most_memory_used = Some((*new_memory, test_name.to_string()));
+                self.most_memory_used = Some((*new_memory, test_name.to_owned()));
             }
         }
     }

@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fs::{File, read_dir};
 use std::path::{Path, PathBuf};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator};
@@ -27,25 +28,27 @@ pub(crate) struct TestingInputs<T: IndexedParallelIterator<Item=Test>> {
 }
 
 pub(crate) fn prepare_file_inputs(input_dir: &Path, in_ext: &str) -> Result<TestingInputs<IntoIter<Test>>, FormattedError> {
-    let tests: Vec<Test> = read_dir(input_dir)
+    let tests = read_dir(input_dir)
         .expect("Cannot open input directory")
         .map(|input| {
             input.expect("Failed to read contents of input directory").path()
         })
         .filter(|path| {
-            return match path.extension() {
-                None => false,
-                Some(ext) => ".".to_owned() + ext.to_str().unwrap_or("") == in_ext
-            };
+            path.extension().is_some_and(|ext| {
+                ".".to_owned() + ext.to_str().unwrap_or("") == in_ext
+            })
         })
         .map(|file_path| {
-            let test_name = file_path.file_stem().unwrap_or_else(|| panic!("The input file {} is invalid", file_path.display())).to_str().unwrap_or_else(|| panic!("The input file {} is invalid", file_path.display())).to_string();
-            Test {
+            let test_name = file_path.file_stem()
+                .and_then(OsStr::to_str)
+                .ok_or(FormattedError::from_str(&format!("The input file {} is invalid", file_path.display())))?
+                .to_owned();
+            Ok(Test {
                 test_name,
                 input_source: TestInputSource::File(file_path),
-            }
+            })
         })
-        .collect();
+        .collect::<Result<Vec<Test>, FormattedError>>()?;
 
     if tests.is_empty() {
         return Err(FormattedError::from_str("There are no files in the input directory with the provided file extension"));

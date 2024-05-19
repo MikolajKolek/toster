@@ -28,16 +28,16 @@ impl Checker {
 
     fn parse_checker_output(output: &str) -> Result<(), TestError> {
         match output.chars().nth(0) {
-            None => Err(CheckerError { error: IncorrectCheckerFormat("the checker returned an empty file".to_string()) }),
+            None => Err(CheckerError { error: IncorrectCheckerFormat("the checker returned an empty file".to_owned()) }),
             Some('C') => Ok(()),
             Some('I') => {
-                let checker_error = if output.len() > 1 { output.split_at(2).1.to_string() } else { String::new() };
+                let checker_error = if output.len() > 1 { output.split_at(2).1.to_owned() } else { String::new() };
                 let error_message = format!("Incorrect output{}{}", if checker_error.trim().is_empty() { "" } else { ": " }, checker_error.trim()).red();
                 Err(TestError::Incorrect {
                     error: error_message.to_string(),
                 })
             }
-            Some(_) => Err(CheckerError { error: IncorrectCheckerFormat("the first character of the checker's output wasn't C or I".to_string()) })
+            Some(_) => Err(CheckerError { error: IncorrectCheckerFormat("the first character of the checker's output wasn't C or I".to_owned()) })
         }
     }
 

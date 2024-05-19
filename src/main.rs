@@ -102,23 +102,19 @@ fn print_output(stopped_early: bool, test_summary: &mut Option<TestSummary>) {
 
 fn setup_panic() {
     let is_panicking = AtomicBool::new(false);
-    match human_panic::PanicStyle::default() {
-        human_panic::PanicStyle::Debug => {}
-        human_panic::PanicStyle::Human => {
-            let meta = human_panic::metadata!();
+    if human_panic::PanicStyle::default() == human_panic::PanicStyle::Human {
+        let meta = human_panic::metadata!();
 
-            panic::set_hook(Box::new(move |info: &PanicInfo| {
-                if is_panicking.load(Acquire) {
-                    halt();
-                }
-                is_panicking.store(true, Release);
+        panic::set_hook(Box::new(move |info: &PanicInfo| {
+            if is_panicking.load(Acquire) {
+                halt();
+            }
+            is_panicking.store(true, Release);
 
-                let file_path = handle_dump(&meta, info);
-                print_msg(file_path, &meta).expect("human-panic: printing error message to console failed");
-                exit(0);
-            }));
-        }
-        _ => {}
+            let file_path = handle_dump(&meta, info);
+            print_msg(file_path, &meta).expect("human-panic: printing error message to console failed");
+            exit(0);
+        }));
     }
 }
 

@@ -26,6 +26,7 @@ pub(crate) struct Sio2jailExecutor {
 struct Sio2jailOutput {
     status: ExitStatus,
     stderr: String,
+    #[allow(clippy::struct_field_names)]
     sio2jail_output: String,
 }
 
@@ -88,13 +89,9 @@ impl Sio2jailExecutor {
         };
 
         let null_file = File::open("/dev/null").expect("Opening /dev/null should not fail");
-        let output = self.run_sio2jail(&null_file, &null_file, &true_command_location);
-        let output = match output {
-            Ok(output) => output,
-            Err(error) => {
-                return Err(FormattedError::from_str(&format!("Sio2jail error: {}", error.to_string())));
-            }
-        };
+        let output = self
+            .run_sio2jail(&null_file, &null_file, &true_command_location)
+            .map_err(|error| FormattedError::from_str(&format!("Sio2jail error: {error}")))?;
         if output.stderr == "Exception occurred: System error occured: perf event open failed: Permission denied: error 13: Permission denied\n" {
             return Err(FormattedError::preformatted(format!(
                 "{}\n{}",
@@ -176,7 +173,7 @@ impl TestExecutor for Sio2jailExecutor {
             "RE" | "RV" => Err(RuntimeError(error_message.map_or(String::new(), |message| format!("- {message}")))),
             "TLE" => Err(TimedOut),
             "MLE" => Err(MemoryLimitExceeded),
-            "OLE" => Err(RuntimeError("- output limit exceeded".to_string())),
+            "OLE" => Err(RuntimeError("- output limit exceeded".to_owned())),
             _ => Err(Sio2jailError(format!("Sio2jail returned an invalid status in the output: {sio2jail_status}")))
         })
     }

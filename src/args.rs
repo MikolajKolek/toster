@@ -130,17 +130,17 @@ impl TryFrom<Args> for ParsedConfig {
 
     fn try_from(args: Args) -> Result<Self, String> {
         if !args.filename.is_file() {
-            return Err("The provided file does not exist".to_string());
+            return Err("The provided file does not exist".to_owned());
         }
 
         let (input_directory, output_directory) = if let Some(io) = args.io {
             if !io.is_dir() {
-                return Err("The input/output directory does not exist".to_string());
+                return Err("The input/output directory does not exist".to_owned());
             }
             (io.clone(), io)
         } else {
             if !args.r#in.is_dir() {
-                return Err("The input directory does not exist".to_string());
+                return Err("The input directory does not exist".to_owned());
             }
             (args.r#in, args.out)
         };
@@ -159,11 +159,11 @@ impl TryFrom<Args> for ParsedConfig {
 
             action_type: match (args.generate, args.checker) {
                 (true, Some(_)) => {
-                    return Err("You can't have the --generate and --checker flags on at the same time".to_string());
+                    return Err("You can't have the --generate and --checker flags on at the same time".to_owned());
                 }
                 (true, None) => {
                     if output_directory.exists() && !output_directory.is_dir() {
-                        return Err("The output path is not a directory".to_string());
+                        return Err("The output path is not a directory".to_owned());
                     }
                     ActionType::Generate {
                         output_directory,
@@ -172,7 +172,7 @@ impl TryFrom<Args> for ParsedConfig {
                 }
                 (false, None) => {
                     if !output_directory.is_dir() {
-                        return Err("The output directory does not exist".to_string());
+                        return Err("The output directory does not exist".to_owned());
                     }
                     ActionType::SimpleCompare {
                         output_directory,
@@ -181,7 +181,7 @@ impl TryFrom<Args> for ParsedConfig {
                 }
                 (false, Some(checker_path)) => {
                     if !checker_path.is_file() {
-                        return Err("The provided checker file does not exist".to_string());
+                        return Err("The provided checker file does not exist".to_owned());
                     }
                     ActionType::Checker {
                         path: checker_path,

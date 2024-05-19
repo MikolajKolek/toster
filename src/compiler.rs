@@ -73,7 +73,7 @@ impl<'a> Compiler<'a> {
 
         let mut child = match child {
             Ok(child) => child,
-            Err(error) if error.kind() == NotFound => { return Err("The compiler was not found".to_string()); }
+            Err(error) if error.kind() == NotFound => { return Err("The compiler was not found".to_owned()); }
             Err(error) => { return Err(error.to_string()); }
         };
         let result = child.wait_timeout(self.compile_timeout).unwrap();
@@ -87,7 +87,7 @@ impl<'a> Compiler<'a> {
             }
         } else {
             child.kill().unwrap();
-            return Err("Compilation timed out".to_string());
+            return Err("Compilation timed out".to_owned());
         }
         Ok(time_before_compilation.elapsed())
     }
