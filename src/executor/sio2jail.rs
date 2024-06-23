@@ -26,6 +26,7 @@ pub(crate) struct Sio2jailExecutor {
 struct Sio2jailOutput {
     status: ExitStatus,
     stderr: String,
+    #[allow(clippy::struct_field_names)]
     sio2jail_output: String,
 }
 
@@ -56,10 +57,10 @@ impl Sio2jailExecutor {
         let mut stderr = create_temp_file().unwrap();
 
         let mut child = Command::new(&self.sio2jail_path)
-            .args(["-f", "3", "-o", "oiaug", "--mount-namespace", "off", "--pid-namespace", "off", "--uts-namespace", "off", "--ipc-namespace", "off", "--net-namespace", "off", "--capability-drop", "off", "--user-namespace", "off", "-m", &self.memory_limit.to_string(), "--", executable_path.to_str().unwrap() ])
+            .args(["-f", "3", "-o", "oiaug", "--mount-namespace", "off", "--pid-namespace", "off", "--uts-namespace", "off", "--ipc-namespace", "off", "--net-namespace", "off", "--capability-drop", "off", "--user-namespace", "off", "-m", &self.memory_limit.to_string(), "--", executable_path.to_str().unwrap()])
             .fd_mappings(vec![FdMapping {
                 parent_fd: sio2jail_output.try_clone().unwrap().into(),
-                child_fd: 3
+                child_fd: 3,
             }]).expect("Failed to redirect file descriptor 3")
             .stdout(make_cloned_stdio(output_file))
             .stderr(make_cloned_stdio(&stderr))
@@ -88,13 +89,9 @@ impl Sio2jailExecutor {
         };
 
         let null_file = File::open("/dev/null").expect("Opening /dev/null should not fail");
-        let output = self.run_sio2jail(&null_file, &null_file, &true_command_location);
-        let output = match output {
-            Ok(output) => output,
-            Err(error) => {
-                return Err(FormattedError::from_str(&format!("Sio2jail error: {}", error.to_string())));
-            }
-        };
+        let output = self
+            .run_sio2jail(&null_file, &null_file, &true_command_location)
+            .map_err(|error| FormattedError::from_str(&format!("Sio2jail error: {error}")))?;
         if output.stderr == "Exception occurred: System error occured: perf event open failed: Permission denied: error 13: Permission denied\n" {
             return Err(FormattedError::preformatted(format!(
                 "{}\n{}",
@@ -139,7 +136,7 @@ impl TestExecutor for Sio2jailExecutor {
                 (ExecutionMetrics { time: None, memory_kibibytes: Some(self.memory_limit) }, Err(MemoryLimitExceeded))
             } else {
                 (ExecutionMetrics::NONE, Err(Sio2jailError(output.stderr)))
-            }
+            };
         }
 
         let split: Vec<&str> = output.sio2jail_output.split_whitespace().collect();
@@ -153,7 +150,7 @@ impl TestExecutor for Sio2jailExecutor {
 
         let metrics = ExecutionMetrics {
             time: Some(time),
-            memory_kibibytes: Some(memory_kibibytes)
+            memory_kibibytes: Some(memory_kibibytes),
         };
 
         match output.status.code() {
@@ -163,21 +160,21 @@ impl TestExecutor for Sio2jailExecutor {
                     halt();
                 }
 
-                return (metrics, Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", output.status))))
+                return (metrics, Err(RuntimeError(format!("- the process was terminated with the following error:\n{}", output.status))));
             }
             Some(0) => {}
             Some(exit_code) => {
-                return (metrics, Err(Sio2jailError(format!("Sio2jail returned an invalid status code: {}", exit_code))) );
+                return (metrics, Err(Sio2jailError(format!("Sio2jail returned an invalid status code: {exit_code}"))));
             }
         }
 
         (ExecutionMetrics { time: Some(time), memory_kibibytes: Some(memory_kibibytes) }, match sio2jail_status {
             "OK" => Ok(()),
-            "RE" | "RV" => Err(RuntimeError(error_message.map(|message| format!("- {}", message)).unwrap_or(String::new()))),
+            "RE" | "RV" => Err(RuntimeError(error_message.map_or(String::new(), |message| format!("- {message}")))),
             "TLE" => Err(TimedOut),
             "MLE" => Err(MemoryLimitExceeded),
-            "OLE" => Err(RuntimeError("- output limit exceeded".to_string())),
-            _ => Err(Sio2jailError(format!("Sio2jail returned an invalid status in the output: {}", sio2jail_status)))
+            "OLE" => Err(RuntimeError("- output limit exceeded".to_owned())),
+            _ => Err(Sio2jailError(format!("Sio2jail returned an invalid status in the output: {sio2jail_status}")))
         })
     }
 }

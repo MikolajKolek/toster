@@ -32,7 +32,7 @@ pub(crate) fn test_to_temp(executor: &impl TestExecutor, input_file: &File) -> (
         &stdout_memfile,
     );
     stdout_memfile.rewind().expect("Failed to rewind memfile");
-    (metrics, result.map(|_| stdout_memfile))
+    (metrics, result.map(|()| stdout_memfile))
 }
 
 pub(crate) enum AnyTestExecutor {

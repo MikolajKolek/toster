@@ -14,6 +14,19 @@ impl<T> OptionExt<T> for Option<T> {
     }
 }
 
+pub(crate) trait ResultExt<T> {
+    fn is_err_or<F: FnOnce(&T) -> bool>(&self, fun: F) -> bool;
+}
+
+impl<T, E> ResultExt<T> for Result<T, E> {
+    fn is_err_or<F: FnOnce(&T) -> bool>(&self, fun: F) -> bool {
+        match self {
+            Err(_) => true,
+            Ok(val) => fun(val)
+        }
+    }
+}
+
 #[deprecated(note = "This is not ideal, there must be a better way to implement it")]
 pub(crate) fn halt() -> ! {
     thread::sleep(Duration::from_secs(u64::MAX));
