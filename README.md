@@ -1,4 +1,4 @@
-# Toster
+    # Toster
 [![Crates.io](https://img.shields.io/crates/l/toster)](https://github.com/MikolajKolek/toster/blob/master/LICENSE)
 [![Crates.io](https://img.shields.io/crates/d/toster)](https://crates.io/crates/toster)
 [![Crates.io](https://img.shields.io/crates/v/toster)](https://crates.io/crates/toster)
