@@ -1,0 +1,36 @@
+name: Continuous Integration
+
+on:
+    workflow_dispatch:
+    push:
+        branches: [ "master" ]
+    pull_request:
+        branches: [ "master" ]
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    clippy:
+        strategy:
+            matrix:
+                platform:
+                    -   os: ubuntu-latest
+                        target: x86_64-unknown-linux-gnu
+                    -   os: macos-latest
+                        target: x86_64-apple-darwin
+                    -   os: windows-latest
+                        target: x86_64-pc-windows-msvc
+        name: "Build and run clippy (target ${{ matrix.platform.target }} running on ${{ matrix.platform.os }})"
+        runs-on: "${{ matrix.platform.os }}"
+        steps:
+            -   uses: actions/checkout@v4
+            -   name: Install Rust toolchain
+                uses: dtolnay/rust-toolchain@stable
+                with:
+                    targets: "x86_64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc"
+                    components: "clippy, rustfmt"
+            -   name: Build
+                run: cargo build --release --all-targets --target=${{ matrix.platform.target }}
+            -   name: Run Clippy
+                run: cargo clippy --all-targets --target=${{ matrix.platform.target }}

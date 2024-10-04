@@ -15,10 +15,11 @@ pub(crate) fn make_cloned_stdio(file: &File) -> Stdio {
 pub(crate) fn create_temp_file() -> io::Result<File> {
     #[cfg(target_os = "linux")]
     {
+        use memfile::MemFile;
         // The file is deleted when all file descriptors are closed
         // https://man7.org/linux/man-pages/man2/memfd_create.2.html
-        memfile::MemFile::create_default("toster temporary file")
-            .map(|memfile| memfile.into_file())
+        MemFile::create_default("toster temporary file")
+            .map(MemFile::into_file)
     }
 
     #[cfg(not(target_os = "linux"))]

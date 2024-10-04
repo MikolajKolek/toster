@@ -13,7 +13,7 @@ use crate::test_errors::ExecutionError::IncorrectCheckerFormat;
 use crate::test_errors::TestError::CheckerError;
 
 pub(crate) struct Checker {
-    executor: SimpleExecutor
+    executor: SimpleExecutor,
 }
 
 impl Checker {
@@ -28,23 +28,23 @@ impl Checker {
 
     fn parse_checker_output(output: &str) -> Result<(), TestError> {
         match output.chars().nth(0) {
-            None => Err(CheckerError { error: IncorrectCheckerFormat("the checker returned an empty file".to_string()) }),
+            None => Err(CheckerError { error: IncorrectCheckerFormat("the checker returned an empty file".to_owned()) }),
             Some('C') => Ok(()),
             Some('I') => {
-                let checker_error = if output.len() > 1 { output.split_at(2).1.to_string() } else { String::new() };
+                let checker_error = if output.len() > 1 { output.split_at(2).1.to_owned() } else { String::new() };
                 let error_message = format!("Incorrect output{}{}", if checker_error.trim().is_empty() { "" } else { ": " }, checker_error.trim()).red();
                 Err(TestError::Incorrect {
                     error: error_message.to_string(),
                 })
             }
-            Some(_) => Err(CheckerError { error: IncorrectCheckerFormat("the first character of the checker's output wasn't C or I".to_string()) })
+            Some(_) => Err(CheckerError { error: IncorrectCheckerFormat("the first character of the checker's output wasn't C or I".to_owned()) })
         }
     }
 
     /// Creates a new temporary file for the checker input and writes the program input to it.
     /// The cursor is left at the end (not rewound).
     ///
-    /// The program output should be appended to this file before calling check() on it,
+    /// The program output should be appended to this file before calling `check()` on it,
     /// which can be done by passing the file as stdin to the tested program.
     pub(crate) fn prepare_checker_input(input_source: &TestInputSource) -> File {
         let mut input_memfile = create_temp_file().unwrap();

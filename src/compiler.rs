@@ -29,7 +29,7 @@ impl CompilerError {
                     ).red(),
                     error
                 )
-            },
+            }
             CompilationError(error) => {
                 format!(
                     "{}\n{}",
@@ -73,24 +73,21 @@ impl<'a> Compiler<'a> {
 
         let mut child = match child {
             Ok(child) => child,
-            Err(error) if error.kind() == NotFound => { return Err("The compiler was not found".to_string()) }
-            Err(error) => { return Err(error.to_string()) }
+            Err(error) if error.kind() == NotFound => { return Err("The compiler was not found".to_owned()); }
+            Err(error) => { return Err(error.to_string()); }
         };
         let result = child.wait_timeout(self.compile_timeout).unwrap();
 
         stderr.rewind().unwrap();
 
-        match result {
-            Some(status) => {
-                if status.code().expect("The compiler returned an invalid status code") != 0 {
-                    let compilation_result = read_to_string(stderr).expect("Failed to read compiler output");
-                    return Err(compilation_result);
-                }
+        if let Some(status) = result {
+            if status.code().expect("The compiler returned an invalid status code") != 0 {
+                let compilation_result = read_to_string(stderr).expect("Failed to read compiler output");
+                return Err(compilation_result);
             }
-            None => {
-                child.kill().unwrap();
-                return Err("Compilation timed out".to_string());
-            }
+        } else {
+            child.kill().unwrap();
+            return Err("Compilation timed out".to_owned());
         }
         Ok(time_before_compilation.elapsed())
     }
@@ -109,7 +106,7 @@ impl<'a> Compiler<'a> {
         name: &'static str,
     ) -> Result<(PathBuf, Option<Duration>), CompilerError> {
         debug_assert!(PathBuf::from(name).extension().is_none());
-        let output_path = self.tempdir.path().join(format!("{}.o", name));
+        let output_path = self.tempdir.path().join(format!("{name}.o"));
 
         if !Self::is_source_file(source_path) {
             fs::copy(source_path, &output_path).expect("The provided filename is invalid");
