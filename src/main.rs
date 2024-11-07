@@ -143,7 +143,7 @@ fn print_output(stopped_early: bool) {
 	if !errors_mutex.is_empty() {
 		// Sorting the errors by name
 		errors_mutex.sort_unstable_by(|a, b| -> Ordering {
-			return human_sort::compare(&a.test_name(), &b.test_name());
+			numeric_sort::cmp(&a.test_name(), &b.test_name())
 		});
 
 		println!("Errors were found in the following tests:");
