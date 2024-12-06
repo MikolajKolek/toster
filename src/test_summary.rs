@@ -2,7 +2,6 @@ use std::cmp::Ordering;
 use std::time::{Duration, Instant};
 use colored::Color::{Blue, Green, Red, Yellow};
 use colored::{Color, Colorize};
-use crate::generic_utils::OptionExt;
 use crate::test_errors::{ExecutionError, ExecutionMetrics, TestError};
 use crate::test_errors::TestError::*;
 
@@ -119,13 +118,13 @@ impl TestSummary {
 
     fn add_metrics(&mut self, metrics: &ExecutionMetrics, test_name: &str) {
         if let Some(new_time) = &metrics.time {
-            if self.slowest_test.is_none_or(|(time, _)| new_time > time) {
+            if self.slowest_test.as_ref().is_none_or(|(time, _)| new_time > time) {
                 self.slowest_test = Some((*new_time, test_name.to_string()));
             }
         }
 
         if let Some(new_memory) = &metrics.memory_kibibytes {
-            if self.most_memory_used.is_none_or(|(memory, _)| new_memory > memory) {
+            if self.most_memory_used.as_ref().is_none_or(|(memory, _)| new_memory > memory) {
                 self.most_memory_used = Some((*new_memory, test_name.to_string()));
             }
         }
