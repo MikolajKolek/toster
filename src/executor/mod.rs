@@ -1,6 +1,7 @@
 pub(crate) mod simple;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub(crate) mod sio2jail;
+mod common;
 
 use std::fs::File;
 use std::io::{Read, Seek};

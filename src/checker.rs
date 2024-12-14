@@ -6,6 +6,7 @@ use std::time::Duration;
 use colored::Colorize;
 use crate::executor::simple::SimpleExecutor;
 use crate::executor::test_to_temp;
+use crate::flag::Flag;
 use crate::prepare_input::TestInputSource;
 use crate::temp_files::create_temp_file;
 use crate::test_errors::TestError;
@@ -17,12 +18,9 @@ pub(crate) struct Checker {
 }
 
 impl Checker {
-    pub(crate) fn new(checker_executable: PathBuf, timeout: Duration) -> Self {
+    pub(crate) fn new(checker_executable: PathBuf, timeout: Duration, ctrl_c_flag: &'static Flag) -> Self {
         Checker {
-            executor: SimpleExecutor {
-                executable_path: checker_executable,
-                timeout,
-            }
+            executor: SimpleExecutor::init(timeout, checker_executable, ctrl_c_flag),
         }
     }
 
