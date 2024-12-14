@@ -9,9 +9,9 @@ mod temp_files;
 mod checker;
 mod compiler;
 mod formatted_error;
+mod output;
 
 use std::{fs, panic};
-use std::fmt::Write as FmtWrite;
 use std::fs::File;
 use std::panic::PanicHookInfo;
 use std::path::PathBuf;
@@ -20,9 +20,8 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Acquire, Release};
 use clap::Parser;
-use colored::Colorize;
 use human_panic::{handle_dump, print_msg};
-use indicatif::{ParallelProgressIterator, ProgressBar, ProgressState, ProgressStyle};
+use indicatif::{ParallelProgressIterator, ProgressBar};
 use rayon::prelude::*;
 use tempfile::tempdir;
 use args::Args;
@@ -41,56 +40,9 @@ use crate::testing_utils::compare_output;
 use crate::executor::sio2jail::Sio2jailExecutor;
 use crate::formatted_error::FormattedError;
 use crate::generic_utils::halt;
+use crate::output::{get_progress_bar, print_output, start_initial_spinner};
 
 static RECEIVED_CTRL_C: AtomicBool = AtomicBool::new(false);
-
-fn print_output(stopped_early: bool, test_summary: &mut Option<TestSummary>) {
-	let Some(test_summary) = test_summary else {
-		println!("{}", "Toster was stopped before testing could start".red());
-		exit(0);
-	};
-
-	if stopped_early {
-		println!();
-	}
-
-	let additional_info = match (&test_summary.slowest_test, &test_summary.most_memory_used) {
-		(None, None) => "".to_string(),
-		(Some((duration, slowest_test_name)), None) => format!(
-			" (Slowest test: {} at {:.3}s)",
-			slowest_test_name, duration.as_secs_f32(),
-		),
-		(None, Some((memory, most_memory_test_name))) => format!(
-			" (Most memory used: {} at {:.3}KiB)",
-			most_memory_test_name, memory,
-		),
-		(Some((duration, slowest_test_name)), Some((memory, most_memory_test_name))) => format!(
-			" (Slowest test: {} at {:.3}s, most memory used: {} at {}KiB)",
-			slowest_test_name, duration.as_secs_f32(),
-			most_memory_test_name, memory,
-		),
-	};
-
-	println!(
-		"{} {} {:.2}s{}\nResults: {}",
-        if test_summary.generate_mode { "Generating" } else { "Testing" },
-        if stopped_early {"stopped after"} else {"finished in"},
-        test_summary.start_time.elapsed().as_secs_f64(),
-        additional_info,
-        test_summary.format_counts(true),
-	);
-
-	let incorrect_results = test_summary.get_errors();
-	if !incorrect_results.is_empty() {
-		println!("Errors were found in the following tests:");
-
-		for (test_name, error) in incorrect_results.iter() {
-			println!("{}", error.to_string(test_name));
-		}
-	}
-
-	exit(0);
-}
 
 fn setup_panic() {
 	let is_panicking = AtomicBool::new(false);
@@ -175,6 +127,7 @@ fn try_main() -> Result<(), FormattedError> {
 		ctrlc::set_handler(move || {
 			RECEIVED_CTRL_C.store(true, Release);
 			print_output(true, &mut test_summary.lock().expect("Failed to lock test summary mutex"));
+			exit(0);
 		}).expect("Error setting Ctrl-C handler");
 	}
 
@@ -192,54 +145,50 @@ fn try_main() -> Result<(), FormattedError> {
 		compile_command: &config.compile_command,
 	};
 
-	let executable = {
-		let (executable, compilation_time) = compiler
-			.prepare_executable(&config.source_path, "program")
-			.map_err(|error| error.to_formatted(false))?;
-		if let Some(compilation_time) = compilation_time {
-			println!("{}", format!("Program compilation completed in {:.2}", compilation_time.as_secs_f32()).green());
-		}
-		executable
-	};
+	let (runner, checker, inputs) = start_initial_spinner(|spinner| {
+		let inputs_handle = spinner.add_job("preparing inputs", || {
+			match &config.input {
+				InputConfig::Directory { directory, ext } => {
+					prepare_file_inputs(directory, ext)
+				},
+			}
+		});
 
-	let checker_executable = if let ActionType::Checker { path } = &config.action_type {
-		let (executable, compilation_time) = compiler
-			.prepare_executable(path, "checker")
-			.map_err(|error| error.to_formatted(true))?;
-		if let Some(compilation_time) = compilation_time {
-			println!("{}", format!("Checker compilation completed in {:.2}", compilation_time.as_secs_f32()).green());
-		}
-		Some(executable)
-	} else { None };
+		let runner_handle = spinner.add_job("compiling program", || {
+			let (executable, _) = compiler
+				.prepare_executable(&config.source_path, "program")
+				.map_err(|error| error.to_formatted(false))?;
+			// TODO: Restore or remove
+			// println! doesn't work correctly with the progress bar
 
-	let runner = init_runner(executable, &config)?;
-	let checker = checker_executable.map(|checker_executable| {
-		Checker::new(checker_executable, config.execute_timeout)
-	});
+			// if let Some(compilation_time) = compilation_time {
+			// 	println!("{}", format!("Program compilation completed in {:.2}", compilation_time.as_secs_f32()).green());
+			// }
+			init_runner(executable, &config)
+		});
 
-	// Progress bar styling
-    let style: ProgressStyle = {
-        let test_summary = test_summary.clone();
-        ProgressStyle::with_template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})\n{counts} {ctrlc}")
-            .expect("Progress bar creation failed")
-            .with_key("eta", |state: &ProgressState, w: &mut dyn FmtWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).expect("Displaying the progress bar failed"))
-            .progress_chars("#>-")
-            .with_key("counts", move |_state: &ProgressState, w: &mut dyn FmtWrite| {
-                write!(w, "{}", test_summary.lock().expect("Failed to lock test summary mutex").as_ref().unwrap().format_counts(false)).expect("Displaying the progress bar failed")
-            })
-            .with_key("ctrlc", |_state: &ProgressState, w: &mut dyn FmtWrite|
-                write!(w, "{}", "(Press Ctrl+C to stop testing and print current results)".bright_black()).expect("Displaying the progress bar Ctrl+C message failed")
-            )
-    };
+		let checker_handle = if let ActionType::Checker { path } = &config.action_type {
+			Some(spinner.add_job("compiling checker", || {
+				let (executable, _) = compiler
+					.prepare_executable(path, "checker")
+					.map_err(|error| error.to_formatted(true))?;
+				// TODO: Restore or remove
+				// if let Some(compilation_time) = compilation_time {
+				// 	println!("{}", format!("Checker compilation completed in {:.2}", compilation_time.as_secs_f32()).green());
+				// }
+				Ok(Checker::new(executable, config.execute_timeout))
+			}))
+		} else { None };
 
-	let inputs = match &config.input {
-		InputConfig::Directory { directory, ext } => {
-			prepare_file_inputs(directory, ext)?
-		},
-	};
+		Ok((
+			runner_handle.join().unwrap(),
+			checker_handle.map(|handle| handle.join().unwrap()),
+			inputs_handle.join().unwrap(),
+		))
+	})?;
+
 	*test_summary.lock().expect("Failed to lock test summary mutex") = Some(TestSummary::new(config.generate_mode(), inputs.test_count));
-
-	let progress_bar = ProgressBar::new(inputs.test_count as u64).with_style(style);
+	let progress_bar = get_progress_bar(&test_summary);
 
 	match config.action_type {
 		ActionType::Generate { output_directory, output_ext } => {

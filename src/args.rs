@@ -44,7 +44,7 @@ pub struct Args {
 	pub timeout: u64,
 
 	/// The number of seconds after which compilation times out if it doesn't finish
-	#[clap(long, value_parser, default_value = "10")]
+	#[clap(long, value_parser, default_value = "30")]
 	pub compile_timeout: u64,
 
 	/// The command used to compile the file. <IN> gets replaced with the path to the source code file, <OUT> is the executable output location.
