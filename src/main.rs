@@ -13,7 +13,7 @@ mod formatted_error;
 use std::{fs, panic};
 use std::fmt::Write as FmtWrite;
 use std::fs::File;
-use std::panic::PanicInfo;
+use std::panic::PanicHookInfo;
 use std::path::PathBuf;
 use std::process::{exit, ExitCode};
 use std::sync::{Arc, Mutex};
@@ -99,7 +99,7 @@ fn setup_panic() {
 		human_panic::PanicStyle::Human => {
 			let meta = human_panic::metadata!();
 
-			panic::set_hook(Box::new(move |info: &PanicInfo| {
+			panic::set_hook(Box::new(move |info: &PanicHookInfo| {
 				if is_panicking.load(Acquire) {
 					halt();
 				}
