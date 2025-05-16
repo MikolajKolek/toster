@@ -25,6 +25,7 @@ is_executable = "1.0.1"
 ctrlc = "3.4.4"
 directories = "5.0.1"
 which = "6.0.1"
+perfjail = { path = "../perfjail" }
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 command-fds = "0.3.0"
